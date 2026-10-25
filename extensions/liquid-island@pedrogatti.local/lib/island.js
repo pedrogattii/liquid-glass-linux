@@ -57,6 +57,9 @@ export class Island {
         this.notifSettings = new Gio.Settings({schema_id: 'org.gnome.desktop.notifications'});
         this.openPreferences = openPreferences;
         this.expanded = false;
+        this.closing = false;
+        this.animationGeneration = 0;
+        this.overviewActive = Boolean(Main.overview.visible);
         this.activeTab = 'notifications';
         this.queue = [];
         this.current = null;
@@ -68,6 +71,7 @@ export class Island {
         this.tickId = 0;
         this.waveStep = 0;
         this.wallClock = new GnomeDesktop.WallClock();
+        this.wallClock.force_seconds = this.getSettingBool('clock-show-seconds', false);
 
         const now = GLib.DateTime.new_now_local();
         this.calYear = now.get_year();
@@ -76,6 +80,7 @@ export class Island {
 
         this.root = new St.Widget({
             style_class: 'liquid-island',
+            visible: false,
             layout_manager: new Clutter.BinLayout(),
             reactive: true,
             clip_to_allocation: false,
@@ -112,8 +117,13 @@ export class Island {
         }
         this.life.connect(Main.layoutManager, 'monitors-changed', () => this.visibility());
         this.life.connect(global.display, 'in-fullscreen-changed', () => this.visibility());
-        for (const sig of ['showing', 'shown', 'hiding', 'hidden'])
-            this.life.connect(Main.overview, sig, () => this.visibility());
+        for (const sig of ['showing', 'shown', 'hiding', 'hidden']) {
+            this.life.connect(Main.overview, sig, () => {
+                // The showing signal can precede overview.visible changing.
+                this.overviewActive = sig !== 'hidden';
+                this.visibility();
+            });
+        }
         this.life.connect(Main.sessionMode, 'updated', () => this.visibility());
         this.life.connect(Main.panel, 'notify::height', () => this.layout());
         this.life.connect(St.ThemeContext.get_for_stage(global.stage), 'notify::scale-factor', () => {
@@ -123,6 +133,10 @@ export class Island {
         this.life.connect(settings, 'changed', (_s, key) => {
             if (key === 'island-position')
                 this.syncPanelPosition();
+            if (key === 'island-module-order')
+                this.syncModuleOrder();
+            if (key === 'clock-show-seconds')
+                this.wallClock.force_seconds = this.getSettingBool('clock-show-seconds', false);
             if (key === 'calendar-week-start')
                 this.renderCalendarGrid();
             if (key === 'pinned-island-apps' || key === 'show-quick-controls')
@@ -446,6 +460,12 @@ export class Island {
             style: 'spacing: 10px;',
             visible: false,
         });
+        this.playerSelector = new St.BoxLayout({
+            orientation: Clutter.Orientation.VERTICAL,
+            style: 'spacing: 4px;',
+            visible: false,
+        });
+        this.player.add_child(this.playerSelector);
         const song = new St.BoxLayout({style: 'spacing: 14px;'});
         this.cover = new St.Icon({
             icon_name: 'audio-x-generic-symbolic',
@@ -550,6 +570,7 @@ export class Island {
         tabsRow.add_child(this.calTabBtn);
         this.notifTabBtn.connect('clicked', () => this.switchTab('notifications'));
         this.calTabBtn.connect('clicked', () => this.switchTab('calendar'));
+        this.tabsRow = tabsRow;
         this.content.add_child(tabsRow);
 
         // Tab View 1: Notifications
@@ -576,6 +597,29 @@ export class Island {
         });
         this.buildCustomCalendar();
         this.content.add_child(this.calendarContainer);
+        this.moduleActors = {
+            music: [this.player, this.playerDivider],
+            quick: [this.quickAppsRow],
+            telemetry: [this.telemetryCard],
+            notifications: [this.history],
+            calendar: [this.calendarContainer],
+        };
+        // Header and tab navigation stay reachable above the ordered sections.
+        this.content.set_child_at_index(this.tabsRow, 1);
+        this.syncModuleOrder();
+    }
+
+    syncModuleOrder() {
+        if (!this.moduleActors)
+            return;
+        const defaults = ['music', 'quick', 'telemetry', 'notifications', 'calendar'];
+        const requested = this.getSettingStrv('island-module-order', defaults);
+        const order = [...new Set([...requested, ...defaults])].filter(name => defaults.includes(name));
+        let index = 2;
+        for (const name of order) {
+            for (const actor of this.moduleActors[name])
+                this.content.set_child_at_index(actor, index++);
+        }
     }
 
     buildMetricWidget(titleText, initialValue) {
@@ -923,7 +967,7 @@ export class Island {
 
     hidden() {
         const monitor = Main.layoutManager.primaryMonitor;
-        const inOverview = Boolean(Main.overview.visible ||
+        const inOverview = Boolean(this.overviewActive || Main.overview.visible ||
             Main.overview._shown ||
             Main.overview._visibleTarget ||
             Main.overview.animationInProgress);
@@ -931,14 +975,43 @@ export class Island {
             Main.sessionMode.isGreeter || global.display.get_monitor_in_fullscreen(monitor.index);
     }
 
+    cancelPopupAnimation() {
+        // Invalidate callbacks before stopping transitions: Clutter may invoke
+        // onStopped synchronously when a transition is removed.
+        const generation = ++this.animationGeneration;
+        this.root.remove_all_transitions();
+        this.root.translation_y = 0;
+        this.root.scale_y = 1;
+        this.root.scale_x = 1;
+        this.root.opacity = 255;
+        this.layoutTarget = null;
+        return generation;
+    }
+
     visibility() {
-        if (this.hidden()) {
-            this.close(false);
+        const hidden = this.hidden();
+        if (hidden) {
+            this.cancelPopupAnimation();
+            this.expanded = false;
+            this.closing = false;
+            this.savedFocus = null;
             this.queue = [];
-            this.clearPreview(false);
+            this.current = null;
             this.event = null;
+            this.life.cancel(this.previewId);
             this.life.cancel(this.eventId);
-            this.root.remove_all_transitions();
+            this.preview.destroy_all_children();
+            this.preview.hide();
+            this.content.hide();
+            this.osdChip.hide();
+            this.musicChip.hide();
+            this.pillSeparator.hide();
+            this.pillBadge.hide();
+            this.compact.remove_style_class_name('liquid-playing');
+            this.root.remove_style_class_name('liquid-expanded');
+            this.root.remove_style_class_name('liquid-preview-glow');
+            this.surface.add_style_class_name('liquid-compact');
+            this.backdrop.setVisible(false);
             this.root.hide();
         } else {
             this.syncPopup();
@@ -950,7 +1023,9 @@ export class Island {
     }
 
     syncPopup() {
-        this.root.visible = !this.destroying && !this.hidden() && Boolean(this.expanded || this.current);
+        const visible = !this.destroying && !this.hidden() && Boolean(this.expanded || this.closing || this.current);
+        this.backdrop.setVisible(visible);
+        this.root.visible = visible;
     }
 
     appearance() {
@@ -977,7 +1052,7 @@ export class Island {
 
         const useDynamicAccent = this.getSettingBool('dynamic-album-accent', true);
         const customAccent = this.getSettingString('custom-accent-color', '#5ac8fa');
-        const albumAccent = this.music?.state?.playing && this.music?.state?.accentColor ?
+        const albumAccent = (this.music?.state?.present ?? this.music?.state?.connected) && this.music?.state?.accentColor ?
             this.music.state.accentColor : null;
         this.activeAccentColor = (useDynamicAccent && albumAccent) ? albumAccent : (customAccent || '#5ac8fa');
 
@@ -996,7 +1071,7 @@ export class Island {
         if (this.osdBarFill)
             this.osdBarFill.set_style(`background-color: ${this.activeAccentColor};`);
 
-        this.backdrop.update(this.expanded);
+        this.backdrop.update(this.expanded, radius);
     }
 
     layout(animate = false) {
@@ -1015,8 +1090,8 @@ export class Island {
             `padding: ${padV}px ${padH}px; font-size: ${fontPx}px;`
         );
 
-        if (this.hidden() || (!this.expanded && !this.current)) {
-            this.root.remove_all_transitions();
+        if (this.hidden() || (!this.expanded && !this.closing && !this.current)) {
+            this.backdrop.setVisible(false);
             this.root.hide();
             return;
         }
@@ -1049,7 +1124,9 @@ export class Island {
         if (target === this.layoutTarget)
             return;
         this.layoutTarget = target;
-        this.root.remove_all_transitions();
+        // Geometry updates must not stop the popup dismissal/opening.
+        for (const property of ['width', 'height', 'x', 'y'])
+            this.root.remove_transition(property);
         this.root.ease({
             width,
             height,
@@ -1067,6 +1144,8 @@ export class Island {
             this.close(true);
             return;
         }
+        this.cancelPopupAnimation();
+        this.closing = false;
         this.savedFocus = global.stage.get_key_focus();
         this.expanded = true;
         this.syncPopup();
@@ -1105,21 +1184,27 @@ export class Island {
     }
 
     close(animate = true) {
-        if (!this.expanded)
+        if (!this.expanded && !this.closing)
             return;
+        const generation = this.cancelPopupAnimation();
         this.expanded = false;
-        if (this.savedFocus?.get_stage())
+        this.closing = true;
+        if (!this.hidden() && this.savedFocus?.get_stage())
             this.savedFocus.grab_key_focus();
         this.savedFocus = null;
 
         const finalizeClose = () => {
+            if (!this.life.alive || this.destroying || generation !== this.animationGeneration)
+                return;
+            this.closing = false;
             this.content.hide();
             this.root.remove_style_class_name('liquid-expanded');
             this.surface.add_style_class_name('liquid-compact');
             this.root.translation_y = 0;
-            this.root.scale_y = 1.0;
-            this.root.scale_x = 1.0;
+            this.root.scale_y = 1;
+            this.root.scale_x = 1;
             this.root.opacity = 255;
+            this.layoutTarget = null;
             if (this.current) {
                 this.preview.show();
                 this.armPreview();
@@ -1130,15 +1215,14 @@ export class Island {
         };
 
         const scale = St.ThemeContext.get_for_stage(global.stage).scale_factor;
-        if (animate && this.root.visible && this.animationsEnabled()) {
-            this.root.remove_all_transitions();
+        if (animate && !this.hidden() && this.root.visible && this.animationsEnabled()) {
             this.root.ease({
                 translation_y: -10 * scale,
                 scale_y: 0.94,
                 opacity: 0,
                 duration: this.animDuration(180),
                 mode: Clutter.AnimationMode.EASE_IN_CUBIC,
-                onStopped: finalizeClose,
+                onComplete: finalizeClose,
             });
         } else {
             finalizeClose();
@@ -1168,18 +1252,46 @@ export class Island {
         return Clutter.EVENT_PROPAGATE;
     }
 
+    syncPlayerSelector(state) {
+        const players = state.players ?? [];
+        this.playerSelector.visible = players.length > 1;
+        const signature = JSON.stringify(players.map(player => [player.name, player.identity, player.selected]));
+        if (signature === this.playerSelectorSignature)
+            return;
+        this.playerSelectorSignature = signature;
+        this.playerSelector.destroy_all_children();
+        if (players.length < 2)
+            return;
+        for (const player of players) {
+            const name = plainText(player.identity || player.name);
+            const choice = new St.Button({
+                can_focus: true,
+                x_expand: true,
+                style_class: `liquid-aio-action-btn${player.selected ? ' liquid-tab-active' : ''}`,
+                accessible_name: `Reproductor: ${name}${player.selected ? ', seleccionado' : ''}`,
+                child: label(`${player.selected ? '✓ ' : ''}${name}`),
+            });
+            choice.connect('clicked', () => this.music?.selectPlayer(player.name));
+            this.playerSelector.add_child(choice);
+        }
+    }
+
     updateMusic() {
         const state = this.music?.state;
         if (!state)
             return;
         const connected = Boolean(state.connected);
-        const isPlaying = Boolean(connected && state.playing);
+        const present = Boolean(state.present ?? state.connected);
+        const showMusic = present && this.getSettingBool('music-show-island', true);
+        const isPlaying = Boolean(present && state.playing);
+        this.syncPlayerSelector(state);
+        this.nowPlayingTag.text = plainText(state.identity || 'REPRODUCTOR');
 
-        this.title.text = connected ? plainText(state.title) : 'Reproductor';
-        this.artist.text = connected ? plainText(state.artist) : 'Sin reproducción activa';
+        this.title.text = present ? plainText(state.title || state.identity || 'Reproductor') : 'Reproductor';
+        this.artist.text = present ? plainText(state.artist || (connected ? 'Sin reproducción activa' : 'Conectando…')) : 'Sin reproducción activa';
         if (this.album) {
             this.album.text = plainText(state.album);
-            this.album.visible = Boolean(state.album && connected);
+            this.album.visible = Boolean(state.album && present);
         }
         for (const actor of [this.smallCover, this.cover]) {
             if (state.cover && actor.gicon !== state.cover)
@@ -1211,22 +1323,23 @@ export class Island {
             this.pillSeparator.visible = true;
         } else {
             this.osdChip.visible = false;
-            this.musicChip.visible = isPlaying;
-            this.pillSeparator.visible = isPlaying;
+            this.musicChip.visible = showMusic && !this.hidden();
+            this.pillSeparator.visible = showMusic && !this.hidden();
         }
 
-        if (isPlaying) {
-            this.compactTitle.text = plainText(state.title);
+        this.compactTitle.text = plainText(state.title || state.identity || 'Reproductor');
+        if (showMusic && isPlaying && !this.hidden()) {
             this.wave.text = '▂▅▃';
             this.compact.add_style_class_name('liquid-playing');
             this.root.add_style_class_name('liquid-playing');
         } else {
+            this.wave.text = 'Ⅱ';
             this.compact.remove_style_class_name('liquid-playing');
             this.root.remove_style_class_name('liquid-playing');
         }
 
-        this.player.visible = isPlaying;
-        this.playerDivider.visible = isPlaying;
+        this.player.visible = showMusic;
+        this.playerDivider.visible = showMusic;
 
         this.appearance();
         this.updateNotifBadge();
@@ -1243,7 +1356,7 @@ export class Island {
         if (this.clearAllBtn)
             this.clearAllBtn.visible = count > 0;
         if (this.pillBadge) {
-            const hasUnread = count > 0 && !this.music?.state?.playing && !this.event;
+            const hasUnread = count > 0 && !this.musicChip.visible && !this.event && !this.hidden();
             this.pillBadge.text = count > 0 ? `• ${count}` : '';
             this.pillBadge.visible = hasUnread;
         }
@@ -1264,7 +1377,8 @@ export class Island {
     }
 
     refreshTicker() {
-        const shouldTick = this.life.alive && this.compact.mapped && !this.hidden() && this.music?.state.playing;
+        const shouldTick = this.life.alive && this.compact.mapped && !this.hidden() &&
+            this.getSettingBool('music-show-island', true) && this.music?.state?.playing;
         if (!shouldTick) {
             this.life.cancel(this.tickId);
             this.tickId = 0;
@@ -1309,7 +1423,7 @@ export class Island {
     }
 
     nextPreview() {
-        if (this.expanded || this.current || this.hidden())
+        if (this.expanded || this.closing || this.current || this.hidden())
             return;
         while (this.queue.length) {
             const item = this.queue.shift();
@@ -1331,9 +1445,12 @@ export class Island {
             return;
         const n = this.current.notification;
         this.preview.add_child(this.notificationCard(n, true));
-        this.preview.visible = !this.expanded;
+        this.preview.visible = !this.expanded && !this.closing;
+        if (this.closing)
+            return;
 
         const wasVisible = this.root.visible;
+        this.cancelPopupAnimation();
         this.syncPopup();
 
         const scale = St.ThemeContext.get_for_stage(global.stage).scale_factor;
@@ -1372,31 +1489,40 @@ export class Island {
 
     clearPreview(animate = true) {
         this.life.cancel(this.previewId);
+        const current = this.current;
+        if (this.expanded || this.closing) {
+            this.finalizeClearPreview(current);
+            return;
+        }
+        const generation = this.cancelPopupAnimation();
         const scale = St.ThemeContext.get_for_stage(global.stage).scale_factor;
-        if (animate && this.root.visible && !this.expanded && this.animationsEnabled()) {
-            this.root.remove_all_transitions();
+        if (animate && !this.hidden() && this.root.visible && this.animationsEnabled()) {
             this.root.ease({
                 translation_y: -14 * scale,
                 scale_y: 0.9,
                 opacity: 0,
                 duration: this.animDuration(200),
                 mode: Clutter.AnimationMode.EASE_IN_CUBIC,
-                onStopped: () => this.finalizeClearPreview(),
+                onComplete: () => {
+                    if (this.life.alive && !this.destroying && generation === this.animationGeneration)
+                        this.finalizeClearPreview(current);
+                },
             });
         } else {
-            this.finalizeClearPreview();
+            this.finalizeClearPreview(current);
         }
     }
 
-    finalizeClearPreview() {
+    finalizeClearPreview(current = this.current) {
+        if (current !== this.current)
+            return;
         this.current = null;
         this.preview.destroy_all_children();
         this.preview.hide();
         this.root.remove_style_class_name('liquid-preview-glow');
-        this.root.translation_y = 0;
-        this.root.scale_y = 1.0;
-        this.root.scale_x = 1.0;
-        this.root.opacity = 255;
+        if (this.closing)
+            return;
+        this.cancelPopupAnimation();
         this.syncPopup();
         this.nextPreview();
     }
@@ -1585,7 +1711,8 @@ export class Island {
 
     destroy() {
         this.destroying = true;
-        this.close(false);
+        this.cancelPopupAnimation();
+        this.backdrop.setVisible(false);
         this.life.destroy();
         this.queue = [];
         this.current = null;

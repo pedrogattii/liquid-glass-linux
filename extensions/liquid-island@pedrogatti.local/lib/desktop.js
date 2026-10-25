@@ -9,12 +9,19 @@ import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as AppFavorites from 'resource:///org/gnome/shell/ui/appFavorites.js';
 import {Lifetime} from './lifecycle.js';
 import {Backdrop} from './backdrop.js';
+import {dockGeometry} from './dockGeometry.js';
+import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
 export class Desktop {
-    constructor(settings, hidden) {
+    constructor(settings, hidden, openPreferences = () => {}) {
         this.life = new Lifetime();
         this.settings = settings;
         this.hidden = hidden;
+        this.openPreferences = openPreferences;
+        this.panelOriginalOrder = new Map();
+        this.nativeDashState = null;
+        this.backgroundMenus = [];
+        this.backgroundManagers = new Set();
         this.interface = new Gio.Settings({schema_id: 'org.gnome.desktop.interface'});
         this.apps = Shell.AppSystem.get_default();
         this.favorites = AppFavorites.getAppFavorites();
@@ -138,8 +145,84 @@ export class Desktop {
         this.life.connect(Main.sessionMode, 'updated', () => this.updateVisibility(true));
         this.life.connect(global.display, 'in-fullscreen-changed', () => this.updateVisibility(true));
 
+        for (const key of ['dock-position', 'panel-left-order', 'panel-right-order'])
+            this.life.connect(settings, `changed::${key}`, () => { this.applyPanelOrder(); this.rebuild(); });
+        this.life.connect(Main.layoutManager, 'monitors-changed', () => this.installBackgroundActions());
+        this.life.connect(Main.panel._rightBox, 'child-added', () => {
+            this.life.cancel(this.panelOrderId);
+            this.panelOrderId = this.life.after(0, () => this.applyPanelOrder());
+        });
+        this.life.connect(settings, 'changed::widgets-edit-mode', () => {
+            for (const item of this.backgroundMenus) {
+                if (item instanceof PopupMenu.PopupSwitchMenuItem)
+                    item.setToggleState(settings.get_boolean('widgets-edit-mode'));
+            }
+        });
+        this.applyPanelOrder();
+        this.installBackgroundActions();
         this.watchActiveWorkspace();
         this.rebuild();
+    }
+
+    getEdge() {
+        return this.settings.get_string('dock-position');
+    }
+
+    vertical() {
+        return ['left', 'right'].includes(this.getEdge());
+    }
+
+    applyPanelOrder() {
+        for (const [side, box] of [['left', Main.panel._leftBox], ['right', Main.panel._rightBox]]) {
+            if (!this.panelOriginalOrder.has(box))
+                this.panelOriginalOrder.set(box, box.get_children());
+            let index = 0;
+            for (const role of this.settings.get_strv(`panel-${side}-order`)) {
+                const roles = role === 'appindicators'
+                    ? Object.keys(Main.panel.statusArea).filter(name => name.startsWith('appindicator-')) : [role];
+                for (const name of roles) {
+                    const actor = Main.panel.statusArea[name]?.container;
+                    if (actor?.get_parent() === box)
+                        box.set_child_at_index(actor, index++);
+                }
+            }
+        }
+    }
+
+    installBackgroundActions() {
+        for (const item of this.backgroundMenus)
+            item.destroy();
+        this.backgroundMenus = [];
+        for (const manager of Main.layoutManager._bgManagers ?? []) {
+            if (!this.backgroundManagers.has(manager)) {
+                this.backgroundManagers.add(manager);
+                this.life.connect(manager, 'changed', () => this.installBackgroundActions());
+            }
+            const actor = manager.backgroundActor;
+            const menu = actor?._backgroundMenu;
+            if (!menu)
+                continue;
+            const item = new PopupMenu.PopupMenuItem('Personalizar Liquid Glass…');
+            item.connect('activate', () => this.openPreferences());
+            menu.addMenuItem(item);
+            this.backgroundMenus.push(item);
+            const edit = new PopupMenu.PopupSwitchMenuItem('Editar widgets', this.settings.get_boolean('widgets-edit-mode'));
+            edit.connect('toggled', (_item, value) => this.settings.set_boolean('widgets-edit-mode', value));
+            menu.addMenuItem(edit);
+            this.backgroundMenus.push(edit);
+        }
+    }
+
+    placeDock(monitor, scale) {
+        const width = this.row.get_preferred_width(-1)[1];
+        const height = this.row.get_preferred_height(width)[1];
+        const geometry = dockGeometry(monitor, width, height, this.getEdge(), scale, Main.panel.height);
+        this.geometry = geometry;
+        this.dock.set_size(width, height);
+        this.dock.set_position(geometry.x, geometry.y);
+        const t = geometry.trigger;
+        this.edgeTrigger.set_position(Math.round(t.x), Math.round(t.y));
+        this.edgeTrigger.set_size(Math.round(t.width), Math.round(t.height));
     }
 
     getBool(key, def = true) {
@@ -172,6 +255,8 @@ export class Desktop {
     hideNativeDash() {
         try {
             if (Main.overview.dash) {
+                if (!this.nativeDashState)
+                    this.nativeDashState = {visible: Main.overview.dash.visible, opacity: Main.overview.dash.opacity, reactive: Main.overview.dash.reactive};
                 Main.overview.dash.opacity = 0;
                 Main.overview.dash.reactive = false;
                 Main.overview.dash.hide();
@@ -183,10 +268,11 @@ export class Desktop {
 
     restoreNativeDash() {
         try {
-            if (Main.overview.dash) {
-                Main.overview.dash.opacity = 255;
-                Main.overview.dash.reactive = true;
-                Main.overview.dash.show();
+            if (Main.overview.dash && this.nativeDashState) {
+                Main.overview.dash.opacity = this.nativeDashState.opacity;
+                Main.overview.dash.reactive = this.nativeDashState.reactive;
+                Main.overview.dash.visible = this.nativeDashState.visible;
+                this.nativeDashState = null;
             }
         } catch (e) {
             console.debug(e);
@@ -352,13 +438,13 @@ export class Desktop {
         if (isFavorite) {
             if (favIndex > 0) {
                 addItem('← Mover a la izquierda', 'go-previous-symbolic', () => {
-                    this.favorites.moveAppToPos(app.get_id(), favIndex - 1);
+                    this.favorites.moveFavoriteToPos(app.get_id(), favIndex - 1);
                     this.schedule();
                 });
             }
             if (favIndex < totalFavs - 1) {
                 addItem('Mover a la derecha →', 'go-next-symbolic', () => {
-                    this.favorites.moveAppToPos(app.get_id(), favIndex + 1);
+                    this.favorites.moveFavoriteToPos(app.get_id(), favIndex + 1);
                     this.schedule();
                 });
             }
@@ -435,7 +521,8 @@ export class Desktop {
             btn.ease({
                 scale_x: scale,
                 scale_y: scale,
-                translation_y: transY,
+                translation_x: this.vertical() ? (this.getEdge() === 'left' ? -transY : transY) : 0,
+                translation_y: this.vertical() ? 0 : (this.getEdge() === 'top' ? -transY : transY),
                 duration: 140,
                 mode: Clutter.AnimationMode.EASE_OUT_QUAD,
             });
@@ -453,7 +540,8 @@ export class Desktop {
                     this.activeDrag.dragged = true;
 
                 if (this.activeDrag.dragged && this.activeDrag.isFavorite) {
-                    this.activeDrag.button.translation_x = deltaX;
+                    this.activeDrag.button.translation_x = this.vertical() ? 0 : deltaX;
+                    this.activeDrag.button.translation_y = this.vertical() ? deltaY : 0;
                     return Clutter.EVENT_STOP;
                 }
             } else if (event.type() === Clutter.EventType.BUTTON_RELEASE && event.get_button() === 1) {
@@ -463,17 +551,18 @@ export class Desktop {
                 if (drag.dragged) {
                     drag.button.ease({
                         translation_x: 0,
+                        translation_y: 0,
                         duration: 150,
                         mode: Clutter.AnimationMode.EASE_OUT_QUAD,
                     });
-                    const [curX] = event.get_coords();
-                    const deltaX = curX - drag.startX;
+                    const [curX, curY] = event.get_coords();
+                    const deltaX = this.vertical() ? curY - drag.startY : curX - drag.startX;
                     const slotWidth = this.iconSize + 10;
                     if (drag.isFavorite && Math.abs(deltaX) >= slotWidth) {
                         const shiftSlots = Math.round(deltaX / slotWidth);
                         const targetIndex = Math.max(0, Math.min(drag.totalFavs - 1, drag.favIndex + shiftSlots));
                         if (targetIndex !== drag.favIndex) {
-                            this.favorites.moveAppToPos(drag.app.get_id(), targetIndex);
+                            this.favorites.moveFavoriteToPos(drag.app.get_id(), targetIndex);
                             this.schedule();
                         }
                     }
@@ -489,6 +578,7 @@ export class Desktop {
                 if (this.activeDrag) {
                     this.activeDrag.button.ease({
                         translation_x: 0,
+                        translation_y: 0,
                         duration: 150,
                         mode: Clutter.AnimationMode.EASE_OUT_QUAD,
                     });
@@ -534,7 +624,9 @@ export class Desktop {
         const showRunning = this.getBool('dock-show-running', true);
         const showAppsBtn = this.getBool('dock-show-apps-button', true);
 
-        const capacity = Math.max(3, Math.min(maxApps, Math.floor((monitor.width / scale - 120) / (iconSize + 16))));
+        this.row.orientation = this.vertical() ? Clutter.Orientation.VERTICAL : Clutter.Orientation.HORIZONTAL;
+        const available = this.vertical() ? monitor.height - Main.panel.height : monitor.width;
+        const capacity = Math.max(1, Math.min(maxApps, Math.floor((available / scale - 120) / (iconSize + 16))));
 
         this.dockButtons = [];
         this.row.destroy_all_children();
@@ -677,18 +769,7 @@ export class Desktop {
 
         this.appLabel.text = this.tracker.focus_app?.get_name() ?? 'Escritorio';
 
-        const width = this.row.get_preferred_width(-1)[1];
-        const height = this.row.get_preferred_height(width)[1];
-        this.dock.set_size(width, height);
-
-        if (this.edgeTrigger) {
-            const triggerWidth = Math.max(width + 80, Math.min(monitor.width * 0.7, 600));
-            const triggerHeight = 3;
-            const triggerX = Math.round(monitor.x + (monitor.width - triggerWidth) / 2);
-            const triggerY = monitor.y + monitor.height - triggerHeight;
-            this.edgeTrigger.set_position(triggerX, triggerY);
-            this.edgeTrigger.set_size(triggerWidth, triggerHeight);
-        }
+        this.placeDock(monitor, scale);
 
         this.watchActiveWorkspace();
         this.updateVisibility(false);
@@ -699,21 +780,24 @@ export class Desktop {
             this.life.cancel(this.hideTimeoutId);
             this.hideTimeoutId = 0;
         }
-        if (this.dock.visible && this.dock.translation_y === 0 && this.dock.opacity === 255)
+        if (this.dock.visible && this.dock.translation_y === 0 && this.dock.translation_x === 0 && this.dock.opacity === 255)
             return;
 
         this.dock.remove_all_transitions();
         this.dock.show();
         if (animate && this.animationsEnabled()) {
-            this.dock.translation_y = 28;
+            this.dock.translation_x = this.geometry?.hideX ?? 0;
+            this.dock.translation_y = this.geometry?.hideY ?? 28;
             this.dock.opacity = 0;
             this.dock.ease({
+                translation_x: 0,
                 translation_y: 0,
                 opacity: 255,
                 duration: 250,
                 mode: Clutter.AnimationMode.EASE_OUT_QUAD,
             });
         } else {
+            this.dock.translation_x = 0;
             this.dock.translation_y = 0;
             this.dock.opacity = 255;
         }
@@ -723,7 +807,8 @@ export class Desktop {
         this.dock.remove_all_transitions();
         if (this.animationsEnabled()) {
             this.dock.ease({
-                translation_y: 28,
+                translation_x: this.geometry?.hideX ?? 0,
+                translation_y: this.geometry?.hideY ?? 28,
                 opacity: 0,
                 duration: 250,
                 mode: Clutter.AnimationMode.EASE_IN_QUAD,
@@ -734,7 +819,8 @@ export class Desktop {
                 },
             });
         } else {
-            this.dock.translation_y = 28;
+            this.dock.translation_x = this.geometry?.hideX ?? 0;
+            this.dock.translation_y = this.geometry?.hideY ?? 28;
             this.dock.opacity = 0;
             this.dock.hide();
         }
@@ -781,27 +867,13 @@ export class Desktop {
         const appOpen = this.isAppOpen();
         const intellihide = this.getBool('dock-intellihide', true);
 
-        const width = this.row.get_preferred_width(-1)[1];
-        const height = this.row.get_preferred_height(width)[1];
-        const targetX = Math.round(monitor.x + (monitor.width - width) / 2);
-        const targetY = Math.round(monitor.y + monitor.height - height - 12 * scale);
+        this.placeDock(monitor, scale);
+        this.edgeTrigger.visible = appOpen && intellihide && !inOverview;
 
-        this.dock.set_position(targetX, targetY);
-
-        if (this.edgeTrigger) {
-            const triggerWidth = Math.max(width + 80, Math.min(monitor.width * 0.7, 600));
-            const triggerHeight = 3;
-            const triggerX = Math.round(monitor.x + (monitor.width - triggerWidth) / 2);
-            const triggerY = monitor.y + monitor.height - triggerHeight;
-            this.edgeTrigger.set_position(triggerX, triggerY);
-            this.edgeTrigger.set_size(triggerWidth, triggerHeight);
-            this.edgeTrigger.visible = appOpen && intellihide && !inOverview;
-        }
-
-        const shouldBeVisible = inOverview || !appOpen || (intellihide && (this.edgeHovered || this.dockHovered || Boolean(this.contextMenu)));
+        const shouldBeVisible = inOverview || !appOpen || !intellihide || (intellihide && (this.edgeHovered || this.dockHovered || Boolean(this.contextMenu)));
 
         if (shouldBeVisible) {
-            if (!this.dock.visible || this.dock.opacity < 255 || this.dock.translation_y !== 0) {
+            if (!this.dock.visible || this.dock.opacity < 255 || this.dock.translation_y !== 0 || this.dock.translation_x !== 0) {
                 this.revealDock(animate);
             }
         } else {
@@ -810,7 +882,8 @@ export class Desktop {
                     this.hideDock();
                 } else {
                     this.dock.remove_all_transitions();
-                    this.dock.translation_y = 28;
+                    this.dock.translation_x = this.geometry?.hideX ?? 0;
+            this.dock.translation_y = this.geometry?.hideY ?? 28;
                     this.dock.opacity = 0;
                     this.dock.hide();
                 }
@@ -819,6 +892,17 @@ export class Desktop {
     }
 
     destroy() {
+        for (const item of this.backgroundMenus)
+            item.destroy();
+        this.backgroundMenus = [];
+        for (const [box, actors] of this.panelOriginalOrder) {
+            let index = 0;
+            for (const actor of actors) {
+                if (actor.get_parent() === box)
+                    box.set_child_at_index(actor, index++);
+            }
+        }
+        this.panelOriginalOrder.clear();
         if (this.hideTimeoutId) {
             this.life.cancel(this.hideTimeoutId);
             this.hideTimeoutId = 0;

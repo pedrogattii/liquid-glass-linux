@@ -25,7 +25,7 @@ export class LegacyWidget {
                         } catch (_) {}
                         if (!this.life.alive && success)
                             this.restore();
-                    });
+                    }, null);
                 });
             }
         } catch (_) {}

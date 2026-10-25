@@ -67,7 +67,7 @@ export class Telemetry {
                 const parts = firstLine.trim().split(/\s+/).slice(1).map(Number);
                 if (parts.length >= 4) {
                     const idle = (parts[3] || 0) + (parts[4] || 0);
-                    const total = parts.reduce((acc, n) => acc + n, 0);
+                    const total = parts.slice(0, 8).reduce((acc, n) => acc + n, 0);
                     if (this._prevTotal > 0 && total > this._prevTotal) {
                         const totalDelta = total - this._prevTotal;
                         const idleDelta = idle - this._prevIdle;

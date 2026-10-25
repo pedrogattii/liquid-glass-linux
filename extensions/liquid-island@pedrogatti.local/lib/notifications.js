@@ -18,6 +18,7 @@ export class Notifications {
         });
         this.suppress = suppress;
         this.injections = new InjectionManager();
+        this.originalBannerBlocked = Main.messageTray.bannerBlocked;
         Main.messageTray.bannerBlocked = true;
         const tray = Main.messageTray;
         for (const source of tray.getSources())
@@ -117,7 +118,7 @@ export class Notifications {
     }
 
     destroy() {
-        Main.messageTray.bannerBlocked = false;
+        Main.messageTray.bannerBlocked = this.originalBannerBlocked;
         const dateMenu = Main.panel.statusArea.dateMenu;
         if (dateMenu?._messageList)
             dateMenu._messageList.visible = Main.sessionMode.hasNotifications && !Main.sessionMode.isGreeter;

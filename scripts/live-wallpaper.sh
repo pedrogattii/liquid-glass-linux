@@ -69,7 +69,14 @@ function download_preset() {
 
     local target="${WALLPAPERS_DIR}/${preset}.mov"
     echo -e "→ Descargando ${CYAN}${PRESET_NAMES[$preset]}${NC}..."
-    curl -4 -skL --progress-bar -o "${target}" "${PRESET_URLS[$preset]}"
+    local temporary
+    temporary="$(mktemp "${WALLPAPERS_DIR}/.${preset}.XXXXXX")"
+    if ! curl -4 --fail --location --proto '=https' --proto-redir '=https' --progress-bar -o "${temporary}" "${PRESET_URLS[$preset]}"; then
+        rm -f "${temporary}"
+        echo "Error: no se pudo descargar el fondo."
+        return 1
+    fi
+    mv -f "${temporary}" "${target}"
     echo -e "${GREEN}✓ Descarga completada:${NC} ${target}"
 }
 
@@ -89,7 +96,9 @@ function stop_wallpaper() {
 }
 
 function detect_engine() {
-    if command -v mpvpaper &>/dev/null; then
+    if [[ "${XDG_CURRENT_DESKTOP,,}" == *gnome* ]] && [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
+        echo "gnome-poster"
+    elif command -v mpvpaper &>/dev/null && [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
         echo "mpvpaper"
     elif command -v mpv &>/dev/null; then
         echo "mpv"
@@ -127,9 +136,12 @@ function apply_preset() {
             echo $! > "${STATE_FILE}"
             echo -e "${GREEN}✓ Fondo animado activo con mpvpaper.${NC}"
             ;;
-        mpv)
-            if [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
-                echo -e "${CYAN}→ Wayland detectado: aplicando primer cuadro estático en GNOME y habilitando reproductor GPU...${NC}"
+        gnome-poster)
+                echo "GNOME Wayland: este motor aplica una imagen estática; no reproduce video."
+                if ! command -v ffmpeg &>/dev/null; then
+                    echo "Se necesita ffmpeg para extraer la imagen del video."
+                    return 1
+                fi
                 # Set static high-res poster in GNOME as baseline
                 if command -v ffmpeg &>/dev/null; then
                     local poster="${WALLPAPERS_DIR}/${preset}-poster.jpg"
@@ -137,7 +149,12 @@ function apply_preset() {
                     gsettings set org.gnome.desktop.background picture-uri "file://${poster}" 2>/dev/null || true
                     gsettings set org.gnome.desktop.background picture-uri-dark "file://${poster}" 2>/dev/null || true
                 fi
-                echo -e "${GREEN}✓ Fondo configurado.${NC}"
+                echo -e "${GREEN}✓ Imagen estática configurada.${NC}"
+            ;;
+        mpv)
+            if [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
+                echo "El motor mpv para ventana raíz requiere X11; no se inicia en Wayland."
+                return 1
             else
                 # X11 root window with mpv
                 nohup mpv --wid=0 --loop-file=inf --hwdec=auto --no-audio --vo=gpu "${video}" >/dev/null 2>&1 &

@@ -6,6 +6,11 @@
 
 set -e
 
+if [ "${EUID}" -eq 0 ]; then
+    echo "Ejecutá ./install.sh como tu usuario, sin sudo. Las personalizaciones se instalan en tu sesión."
+    exit 1
+fi
+
 # Colores de salida
 CYAN='\033[0;36m'
 GREEN='\033[0;32m'

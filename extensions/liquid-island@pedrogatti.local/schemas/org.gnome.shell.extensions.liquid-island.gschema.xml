@@ -143,5 +143,65 @@
       <default>true</default>
       <summary>Show All Applications grid button in dock</summary>
     </key>
+    <key name="island-module-order" type="as">
+      <default>['music', 'quick', 'telemetry', 'notifications', 'calendar']</default>
+      <summary>Order of expanded island modules</summary>
+    </key>
+    <key name="music-show-island" type="b">
+      <default>true</default>
+      <summary>Show media in island</summary>
+    </key>
+    <key name="music-show-widget" type="b">
+      <default>true</default>
+      <summary>Show automatic desktop music widget</summary>
+    </key>
+    <key name="dock-position" type="s"><choices><choice value="bottom"/><choice value="top"/><choice value="left"/><choice value="right"/></choices>
+      <default>'bottom'</default>
+      <summary>Dock edge: bottom, top, left or right</summary>
+    </key>
+    <key name="panel-left-order" type="as">
+      <default>['activities', 'liquidLauncher', 'liquidContext']</default>
+      <summary>Left panel group order</summary>
+    </key>
+    <key name="panel-right-order" type="as">
+      <default>['appindicators', 'keyboard', 'a11y', 'quickSettings']</default>
+      <summary>Right panel group order</summary>
+    </key>
+    <key name="widgets-enabled" type="as">
+      <default>['music']</default>
+      <summary>Enabled native desktop widgets</summary>
+    </key>
+    <key name="widget-layout" type="s">
+      <default>'{"version":1,"widgets":{}}'</default>
+      <summary>Versioned desktop widget layout</summary>
+    </key>
+    <key name="widgets-edit-mode" type="b">
+      <default>false</default>
+      <summary>Show widget move and resize controls</summary>
+    </key>
+    <key name="widget-snap-to-grid" type="b">
+      <default>true</default>
+      <summary>Snap widget geometry to grid</summary>
+    </key>
+    <key name="widget-notes" type="s">
+      <default>''</default>
+      <summary>Local widget notes</summary>
+    </key>
+    <key name="widget-tasks" type="s">
+      <default>'[]'</default>
+      <summary>Local widget tasks JSON</summary>
+    </key>
+    <key name="widget-timer-seconds" type="i"><range min="1" max="86400"/>
+      <default>1500</default>
+      <summary>Timer duration in seconds</summary>
+    </key>
+    <key name="widget-weather-location" type="s">
+      <default>''</default>
+      <summary>Serialized GWeather location; empty uses system weather location</summary>
+    </key>
+    <key name="toggle-widget-edit" type="as">
+      <default>['&lt;Super&gt;&lt;Shift&gt;w']</default>
+      <summary>Toggle desktop widget editing</summary>
+    </key>
   </schema>
 </schemalist>
