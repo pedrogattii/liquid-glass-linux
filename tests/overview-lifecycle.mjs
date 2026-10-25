@@ -104,6 +104,7 @@ function fixture() {
 }
 {
     const backdrop = Object.create(Backdrop.prototype);
+    backdrop.life = {alive: true};
     let destroys = 0;
     Object.assign(backdrop, {
         visible: true, generation: 3, actor: actor(), root: actor(),

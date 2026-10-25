@@ -9,6 +9,8 @@ export class Lifetime {
     }
 
     connect(object, signal, callback) {
+        if (!this.alive)
+            return 0;
         const id = object.connect(signal, (...args) => {
             if (this.alive)
                 return callback(...args);
@@ -19,6 +21,8 @@ export class Lifetime {
     }
 
     after(ms, callback) {
+        if (!this.alive)
+            return 0;
         const id = GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => {
             this.sources.delete(id);
             if (this.alive)
@@ -30,6 +34,8 @@ export class Lifetime {
     }
 
     timeoutSeconds(seconds, callback) {
+        if (!this.alive)
+            return 0;
         const id = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, seconds, () => {
             if (!this.alive) {
                 this.sources.delete(id);

@@ -5,6 +5,7 @@ export const EffectsManager = class EffectsManager {
     constructor(connections) {
         this.connections = connections;
         this.used = new Set();
+        this.dynamicSurfaces = new Set();
         this.PIPELINE_EFFECTS = get_supported_effects();
         this.SUPPORTED_EFFECTS = {
             ...this.PIPELINE_EFFECTS,
@@ -67,6 +68,10 @@ export const EffectsManager = class EffectsManager {
     }
 
     destroy_all() {
+        // External surfaces may outlive our components during Shell shutdown.
+        // Detach their capture effects while both shared managers still exist.
+        [...this.dynamicSurfaces].forEach(surface => surface.destroy());
+        this.dynamicSurfaces.clear();
         [...this.used].forEach(effect => this.remove(effect));
         Object.keys(this.SUPPORTED_EFFECTS).forEach(effect_name => {
             this[effect_name + '_effects'] = [];

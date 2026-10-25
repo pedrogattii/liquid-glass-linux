@@ -8,6 +8,7 @@ import { RoundedPipeline } from './rounded_pipeline.js';
 export class DynamicPipeline {
     constructor(effectsManager, pipelinesManager, pipelineId, options = {}) {
         this.effectsManager = effectsManager;
+        this.effectsManager.dynamicSurfaces?.add(this);
         this.pipelinesManager = pipelinesManager;
         this.pipelineId = pipelineId;
         this.cornerRadius = options.corner_radius ?? null;
@@ -214,6 +215,7 @@ export class DynamicPipeline {
     }
 
     destroy() {
+        this.effectsManager.dynamicSurfaces?.delete(this);
         this.disconnectContainer();
         if (this.mapId)
             this.actor.disconnect(this.mapId);

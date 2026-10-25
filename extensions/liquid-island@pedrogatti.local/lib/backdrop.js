@@ -36,11 +36,12 @@ export class Backdrop {
             return;
         const extension = Main.extensionManager.lookup(BMS);
         const bms = extension?.stateObj;
-        if (extension?.state !== 1 || !bms?._effects_manager || !bms?._pipelines_manager)
+        if (extension?.state !== 1 || !bms?._effects_manager?.dynamicSurfaces || !bms?._pipelines_manager)
             return;
         try {
             const {DynamicPipeline} = await import(`${extension.dir.get_uri()}/render/dynamic_surface.js`);
-            if (!this.life.alive || generation !== this.generation)
+            if (!this.life.alive || generation !== this.generation ||
+                !bms._effects_manager?.dynamicSurfaces || !bms._pipelines_manager)
                 return;
             this.pipeline = new DynamicPipeline(bms._effects_manager, bms._pipelines_manager,
                 'pipeline_default', {corner_radius: this.radius});
@@ -63,6 +64,8 @@ export class Backdrop {
     }
 
     setVisible(visible) {
+        if (!this.life.alive)
+            return;
         if (this.visible === visible)
             return;
         this.visible = visible;
@@ -78,6 +81,8 @@ export class Backdrop {
     }
 
     update(expanded = this.expanded, radius = this.radius) {
+        if (!this.life.alive)
+            return;
         this.expanded = expanded;
         this.radius = radius;
         this.pipeline?.set_corner_radius(radius);
@@ -96,6 +101,8 @@ export class Backdrop {
     }
 
     destroy() {
+        if (!this.life.alive)
+            return;
         this.generation++;
         this.life.destroy();
         this.disconnectPipeline();

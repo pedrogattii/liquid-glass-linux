@@ -34,6 +34,7 @@ export class Desktop {
         this.activeDrag = null;
         this.dockButtons = [];
         this.trackedWindows = new Set();
+        this.windowLives = new Map();
         this.iconSize = 46;
 
         // Top panel launcher & context
@@ -292,11 +293,15 @@ export class Desktop {
             return;
         win._liquidTracked = true;
         this.trackedWindows.add(win);
-        this.life.connect(win, 'notify::minimized', () => this.updateVisibility(true));
-        this.life.connect(win, 'notify::maximized-horizontally', () => this.updateVisibility(true));
-        this.life.connect(win, 'notify::maximized-vertically', () => this.updateVisibility(true));
-        this.life.connect(win, 'workspace-changed', () => this.updateVisibility(true));
-        this.life.connect(win, 'unmanaged', () => {
+        const life = new Lifetime();
+        this.windowLives.set(win, life);
+        life.connect(win, 'notify::minimized', () => this.updateVisibility(true));
+        life.connect(win, 'notify::maximized-horizontally', () => this.updateVisibility(true));
+        life.connect(win, 'notify::maximized-vertically', () => this.updateVisibility(true));
+        life.connect(win, 'workspace-changed', () => this.updateVisibility(true));
+        life.connect(win, 'unmanaged', () => {
+            life.destroy();
+            this.windowLives.delete(win);
             this.trackedWindows.delete(win);
             try {
                 delete win._liquidTracked;
@@ -308,6 +313,9 @@ export class Desktop {
     }
 
     cleanupWindows() {
+        for (const life of this.windowLives.values())
+            life.destroy();
+        this.windowLives.clear();
         for (const win of this.trackedWindows) {
             try {
                 delete win._liquidTracked;
@@ -776,6 +784,7 @@ export class Desktop {
     }
 
     revealDock(animate = true) {
+        this.backdrop.setVisible(true);
         if (this.hideTimeoutId) {
             this.life.cancel(this.hideTimeoutId);
             this.hideTimeoutId = 0;
@@ -815,6 +824,7 @@ export class Desktop {
                 onComplete: () => {
                     if (!this.edgeHovered && !this.dockHovered && !this.contextMenu) {
                         this.dock.hide();
+                        this.backdrop.setVisible(false);
                     }
                 },
             });
@@ -823,10 +833,13 @@ export class Desktop {
             this.dock.translation_y = this.geometry?.hideY ?? 28;
             this.dock.opacity = 0;
             this.dock.hide();
+            this.backdrop.setVisible(false);
         }
     }
 
     scheduleHideDock() {
+        if (!this.life.alive)
+            return;
         if (this.hideTimeoutId)
             this.life.cancel(this.hideTimeoutId);
 
@@ -846,6 +859,7 @@ export class Desktop {
             this.restoreNativeDash();
             this.dock.remove_all_transitions();
             this.dock.hide();
+            this.backdrop.setVisible(false);
             if (this.edgeTrigger)
                 this.edgeTrigger.hide();
             this.closeContextMenu();
@@ -883,15 +897,17 @@ export class Desktop {
                 } else {
                     this.dock.remove_all_transitions();
                     this.dock.translation_x = this.geometry?.hideX ?? 0;
-            this.dock.translation_y = this.geometry?.hideY ?? 28;
+                    this.dock.translation_y = this.geometry?.hideY ?? 28;
                     this.dock.opacity = 0;
                     this.dock.hide();
+                    this.backdrop.setVisible(false);
                 }
             }
         }
     }
 
     destroy() {
+        this.life.destroy();
         for (const item of this.backgroundMenus)
             item.destroy();
         this.backgroundMenus = [];
@@ -919,9 +935,9 @@ export class Desktop {
         }
         this.restoreNativeDash();
         this.cleanupWindows();
-        this.life.destroy();
         this.dock.remove_all_transitions();
         this.dock.hide();
+        this.backdrop.setVisible(false);
         this.launcher.destroy();
         this.context.destroy();
         this.backdrop.destroy();
