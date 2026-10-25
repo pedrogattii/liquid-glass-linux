@@ -4,5 +4,5 @@
   "description": "Escritorio Liquid Glass con isla integrada en la barra, dock y superficies adaptables.",
   "shell-version": ["50"],
   "settings-schema": "org.gnome.shell.extensions.liquid-island",
-  "version": 2
+  "url": "https://github.com/pedrogattii/liquid-glass-linux"
 }

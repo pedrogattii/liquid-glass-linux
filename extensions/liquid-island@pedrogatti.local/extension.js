@@ -8,12 +8,15 @@ import {Notifications} from './lib/notifications.js';
 import {SystemEvents} from './lib/system.js';
 import {LegacyWidget} from './lib/legacy.js';
 import {Desktop} from './lib/desktop.js';
+import {Telemetry} from './lib/telemetry.js';
 
 export default class LiquidIsland extends Extension {
     enable() {
         try {
             this.settings = this.getSettings();
             this.island = new Island(this.settings, () => this.openPreferences());
+            this.telemetry = new Telemetry(state => this.island?.updateTelemetry(state));
+            this.island.telemetry = this.telemetry;
             this.music = new Music(() => this.island?.updateMusic());
             this.island.music = this.music;
             this.notifications = new Notifications({
@@ -28,7 +31,7 @@ export default class LiquidIsland extends Extension {
             this.island.updateMusic();
             this.desktop = new Desktop(this.settings, () => this.island.hidden());
             this.legacy = new LegacyWidget(this.settings, () => Boolean(this.island?.root.get_stage()));
-            console.log('Liquid Island: ready');
+            console.debug('Liquid Island: ready');
         } catch (error) {
             this.disable();
             throw error;
@@ -37,6 +40,7 @@ export default class LiquidIsland extends Extension {
 
     disable() {
         Main.wm.removeKeybinding('toggle-island');
+        this.telemetry?.destroy();
         this.legacy?.destroy();
         this.system?.destroy();
         this.desktop?.destroy();
@@ -44,6 +48,7 @@ export default class LiquidIsland extends Extension {
         this.music?.destroy();
         this.island?.destroy();
         this.system = this.notifications = this.music = this.island = this.settings = null;
+        this.telemetry = null;
         this.legacy = null;
         this.desktop = null;
     }

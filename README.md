@@ -27,30 +27,36 @@ Entorno de escritorio completo con estética **Liquid Glass** (*vidrio translúc
 
 ## ✨ Características Principales
 
-1. **Dynamic Island Nativa (`liquid-island`)**:
-   - Integrada en el grupo de cristal central junto al reloj en el panel superior.
-   - Controlador multimedia en vivo con carátula dinámica descargada en segundo plano, controles de reproducción y barra de progreso.
-   - Notificaciones interactivas con historial agrupado y acciones rápidas.
-   - Indicadores integrados de volumen y brillo en monitor principal.
+1. **Dynamic Island 100% Unificada (`liquid-island`)**:
+   - Píldora central única en la barra superior (elimina el botón duplicado de reloj/calendario).
+   - Reloj y fecha en vivo integrados de forma nativa sin procesos en segundo plano innecesarios.
+   - **Chip multimedia condicional**: El reproductor solo aparece en la barra superior cuando hay música sonando; en reposo, la isla se contrae elegantemente a solo la hora y fecha.
+   - Menú desplegable con **pestañas intercambiables estilo macOS**: `[ 🔔 Notificaciones ]` y `[ 📅 Calendario ]`, con reproductor multimedia en la cabecera cuando está activo.
+   - **Animaciones nativas de resortes (*Spring Physics*)**: Curvas `EASE_OUT_BACK` con resplandor de vidrio líquido para la llegada y despedida de notificaciones.
    - Atajo global configurable: **`Super + I`**.
 
-2. **Efecto Liquid Glass Auténtico (`blur-my-shell`)**:
+2. **Motor Universal de Fondos Animados (`liquid-live-wallpaper`)**:
+   - Soporte para bucles de video de alta definición (4K/1080p) con decodificación por hardware GPU (`hwdec=auto`) y bajo consumo de batería.
+   - Presets curados: *macOS Sonoma Horizon*, *Liquid Glass Chromatic Flow* y *Dark Acrylic Aurora*.
+   - Pausa automática al maximizar o abrir apps a pantalla completa.
+
+3. **Efecto Liquid Glass Auténtico (`blur-my-shell`)**:
    - Desenfoque translúcido por hardware (*Dual-Kawase shaders*) acelerado por GPU.
    - Optimización de rendimiento con desenfoque estático (*Static Blur*) en panel y vista general para **0.0% de sobrecarga de CPU**.
    - Lista blanca de ventanas con desenfoque translúcido (`spotify`, `ptyxis`, `nautilus`, etc.).
 
-3. **Tema WhiteSur Dark & Libadwaita**:
+4. **Tema WhiteSur Dark & Libadwaita**:
    - Ventanas con bordes suaves, reflejo especular superior y botones estilo semáforo de macOS.
    - Inyección directa en `~/.config/gtk-4.0/` y compatibilidad con Flatpak mediante permisos globales.
 
-4. **Tipografía Apple San Francisco (SF Pro)**:
+5. **Tipografía Apple San Francisco (SF Pro)**:
    - Familia tipográfica completa de Apple (`SF-Pro-Display` y `SF-Pro-Text`) preconfigurada con subpixel rendering `rgba` y antialiasing nítido.
 
-5. **Dock Flotante Inteligente**:
+6. **Dock Flotante Inteligente**:
    - Dock translúcido inferior con auto-ocultado inteligente (se esconde cuando hay ventanas en primer plano y se muestra en el escritorio limpio o al invocar la vista general sin duplicar el dash nativo).
 
-6. **Widget de Spotify Always-on-Top Adicional (`spotify-glass-widget`)**:
-   - Mini reproductor de escritorio flotante con modo tarjeta completa (360x140px) y modo píldora ultra-compacta (180x44px).
+7. **Suite de Skills para Antigravity (`gnome-rice-architect`)**:
+   - Skill incluido en `.agents/skills/gnome-rice-architect/SKILL.md` para asistir de forma autónoma en la personalización y desarrollo de extensiones GNOME, estilos CSS translúcidos y monitoreo de DBus.
 
 ---
 
@@ -61,6 +67,10 @@ liquid-glass-linux/
 ├── install.sh                  # Instalador automatizado de 1 paso
 ├── uninstall.sh                # Restaurador del entorno predeterminado de GNOME
 ├── backup-live.sh              # Sincroniza personalizaciones hechas en vivo hacia el repo
+├── scripts/                    # Scripts de utilidades y fondos
+│   └── live-wallpaper.sh       # Motor universal de fondos animados (Sonoma, Liquid Glass)
+├── .agents/skills/             # Skills para Antigravity
+│   └── gnome-rice-architect/   # Asistente de diseño y arquitectura de escritorio
 ├── extensions/                 # Extensiones de GNOME Shell incluidas
 │   ├── liquid-island@pedrogatti.local           # Dynamic Island & Liquid Glass core
 │   ├── blur-my-shell@aunetx                     # Motor de desenfoque GPU Dual-Kawase

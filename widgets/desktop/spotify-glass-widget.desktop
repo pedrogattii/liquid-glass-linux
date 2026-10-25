@@ -1,7 +1,7 @@
 [Desktop Entry]
 Name=Spotify Liquid Glass
 Comment=Widget flotante de Spotify con diseño Liquid Glass estilo Apple
-Exec=/home/pedrogatti/.local/bin/spotify-glass-widget
+Exec=spotify-glass-widget
 Icon=com.spotify.Client
 Terminal=false
 Type=Application

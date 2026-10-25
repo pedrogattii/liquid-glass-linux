@@ -25,5 +25,123 @@
       <default>['&lt;Super&gt;i']</default>
       <summary>Atajo para desplegar la isla</summary>
     </key>
+    <key name="island-position" type="s">
+      <choices>
+        <choice value="center"/>
+        <choice value="left"/>
+        <choice value="right"/>
+      </choices>
+      <default>'center'</default>
+      <summary>Horizontal position on top bar: center, left, right</summary>
+    </key>
+    <key name="island-width" type="i">
+      <range min="360" max="580"/>
+      <default>430</default>
+      <summary>Expanded island width in px</summary>
+    </key>
+    <key name="pill-scale" type="d">
+      <range min="0.85" max="1.30"/>
+      <default>1.0</default>
+      <summary>Compact pill scale factor</summary>
+    </key>
+    <key name="island-offset-y" type="i">
+      <range min="0" max="28"/>
+      <default>8</default>
+      <summary>Vertical offset from top bar in px</summary>
+    </key>
+    <key name="enable-animations" type="b">
+      <default>true</default>
+      <summary>Enable spring animations</summary>
+    </key>
+    <key name="animation-speed" type="d">
+      <range min="0.5" max="2.0"/>
+      <default>1.0</default>
+      <summary>Animation speed multiplier</summary>
+    </key>
+    <key name="color-scheme" type="s">
+      <default>'default'</default>
+      <summary>Color scheme override</summary>
+    </key>
+    <key name="show-banners" type="b">
+      <default>true</default>
+      <summary>Show floating notification banners</summary>
+    </key>
+    <key name="clock-use-24h" type="b">
+      <default>true</default>
+      <summary>Use 24-hour clock format</summary>
+    </key>
+    <key name="clock-show-seconds" type="b">
+      <default>false</default>
+      <summary>Show seconds in compact clock</summary>
+    </key>
+    <key name="clock-show-date" type="b">
+      <default>true</default>
+      <summary>Show short date next to clock in compact pill</summary>
+    </key>
+    <key name="calendar-week-start" type="i">
+      <range min="0" max="1"/>
+      <default>1</default>
+      <summary>First day of week: 1 = Monday, 0 = Sunday</summary>
+    </key>
+    <key name="dynamic-album-accent" type="b">
+      <default>true</default>
+      <summary>Extract dominant accent color from album art</summary>
+    </key>
+    <key name="custom-accent-color" type="s">
+      <default>'#5ac8fa'</default>
+      <summary>Custom accent hex color</summary>
+    </key>
+    <key name="glass-opacity" type="d">
+      <range min="0.15" max="0.90"/>
+      <default>0.42</default>
+      <summary>Glass surface opacity</summary>
+    </key>
+    <key name="corner-radius" type="i">
+      <range min="14" max="40"/>
+      <default>28</default>
+      <summary>Island corner radius in px</summary>
+    </key>
+    <key name="show-telemetry-pill" type="b">
+      <default>false</default>
+      <summary>Show CPU/RAM telemetry in compact top pill</summary>
+    </key>
+    <key name="show-telemetry-panel" type="b">
+      <default>true</default>
+      <summary>Show CPU/RAM/Temp telemetry card in expanded island</summary>
+    </key>
+    <key name="show-quick-controls" type="b">
+      <default>true</default>
+      <summary>Show Quick Controls and Pinned Apps in expanded island</summary>
+    </key>
+    <key name="pinned-island-apps" type="as">
+      <default>['org.gnome.Nautilus.desktop', 'org.gnome.Ptyxis.desktop', 'org.gnome.Settings.desktop', 'com.spotify.Client.desktop']</default>
+      <summary>Desktop IDs pinned in Island Quick Launcher</summary>
+    </key>
+    <key name="dock-intellihide" type="b">
+      <default>true</default>
+      <summary>Reveal dock when cursor touches bottom screen edge</summary>
+    </key>
+    <key name="dock-magnification" type="b">
+      <default>true</default>
+      <summary>Magnify dock icons on hover like macOS</summary>
+    </key>
+    <key name="dock-icon-size" type="i">
+      <range min="32" max="64"/>
+      <default>46</default>
+      <summary>Dock icon size in px</summary>
+    </key>
+    <key name="dock-max-apps" type="i">
+      <range min="6" max="28"/>
+      <default>18</default>
+      <summary>Maximum apps displayed in dock</summary>
+    </key>
+    <key name="dock-show-running" type="b">
+      <default>true</default>
+      <summary>Show running unpinned apps in dock</summary>
+    </key>
+    <key name="dock-show-apps-button" type="b">
+      <default>true</default>
+      <summary>Show All Applications grid button in dock</summary>
+    </key>
   </schema>
 </schemalist>

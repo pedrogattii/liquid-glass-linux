@@ -277,6 +277,7 @@ progressbar:hover progress {
 
 MODE_CARD = 0
 MODE_PILL = 1
+COVER_CACHE_PATH = f"/tmp/spotify_glass_cover_{os.getuid()}.jpg"
 
 class SpotifyGlassWidget:
     def __init__(self):
@@ -562,7 +563,7 @@ class SpotifyGlassWidget:
                 self.current_cover_size = target_cover
                 self.cover_img.set_pixel_size(target_cover)
                 if self.last_art_url:
-                    self._apply_cover_pixbuf("/tmp/spotify_glass_cover.jpg")
+                    self._apply_cover_pixbuf(COVER_CACHE_PATH)
 
     def _setup_indicator(self):
         # Desactivado para mantener la barra superior limpia sin iconos innecesarios
@@ -805,10 +806,12 @@ class SpotifyGlassWidget:
         if not self.dbus_proxy:
             return
         self.last_seek_time = GLib.get_monotonic_time()
+        prev_pos_us = self.current_pos_us
         self.current_pos_us = target_pos_us
         if self.track_length_us > 0:
             self._update_ui_progress(float(target_pos_us) / float(self.track_length_us))
 
+        offset_us = target_pos_us - prev_pos_us
         if self.current_track_id and self.current_track_id.startswith("/"):
             try:
                 self.dbus_proxy.call(
@@ -821,14 +824,13 @@ class SpotifyGlassWidget:
                 )
             except Exception as e:
                 print(f"[SpotifyGlass] Seek SetPosition error: {e}", flush=True)
-                self._fallback_seek_offset(target_pos_us)
+                self._fallback_seek_offset(offset_us)
         else:
-            self._fallback_seek_offset(target_pos_us)
+            self._fallback_seek_offset(offset_us)
 
-    def _fallback_seek_offset(self, target_pos_us):
+    def _fallback_seek_offset(self, offset_us):
         if not self.dbus_proxy:
             return
-        offset_us = target_pos_us - self.current_pos_us
         try:
             self.dbus_proxy.call(
                 "Seek",
@@ -1055,7 +1057,7 @@ class SpotifyGlassWidget:
 
     def _fetch_cover_async(self, url):
         try:
-            cache_file = "/tmp/spotify_glass_cover.jpg"
+            cache_file = COVER_CACHE_PATH
             if url.startswith("http://") or url.startswith("https://"):
                 req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
                 with urllib.request.urlopen(req, timeout=5) as resp:

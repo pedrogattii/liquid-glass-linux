@@ -58,12 +58,17 @@ export class Backdrop {
     update(expanded = this.expanded) {
         this.expanded = expanded;
         this.pipeline?.set_corner_radius(expanded ? 30 : 24);
-        this.pipeline?.set_opacity_factor(this.settings.get_double('blur-strength'), true);
+        let strength = 0.85;
+        try {
+            strength = this.settings.get_double('blur-strength');
+        } catch (_) {}
+        this.pipeline?.set_opacity_factor(strength, true);
     }
 
     disconnectPipeline() {
-        try { this.pipeline?.destroy(); } catch (_) { /* dependency was disabled */ }
+        this.pipeline?.destroy();
         this.pipeline = null;
+        this.actor?.destroy_all_children?.();
         this.root.add_style_class_name('liquid-no-blur');
     }
 

@@ -29,6 +29,23 @@ export class Lifetime {
         return id;
     }
 
+    timeoutSeconds(seconds, callback) {
+        const id = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, seconds, () => {
+            if (!this.alive) {
+                this.sources.delete(id);
+                return GLib.SOURCE_REMOVE;
+            }
+            const res = callback();
+            if (res === GLib.SOURCE_REMOVE || res === false) {
+                this.sources.delete(id);
+                return GLib.SOURCE_REMOVE;
+            }
+            return GLib.SOURCE_CONTINUE;
+        });
+        this.sources.add(id);
+        return id;
+    }
+
     cancel(id) {
         if (this.sources.delete(id))
             GLib.source_remove(id);

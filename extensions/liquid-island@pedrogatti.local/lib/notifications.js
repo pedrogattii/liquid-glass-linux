@@ -18,6 +18,7 @@ export class Notifications {
         });
         this.suppress = suppress;
         this.injections = new InjectionManager();
+        Main.messageTray.bannerBlocked = true;
         const tray = Main.messageTray;
         for (const source of tray.getSources())
             this.watch(source);
@@ -87,7 +88,8 @@ export class Notifications {
             if (!eligible())
                 return false;
             notification.acknowledged = true;
-            notification.playSound();
+            if (notification.source?.policy?.playSound !== false)
+                notification.playSound?.();
             return true;
         });
         this.changed();
@@ -104,15 +106,18 @@ export class Notifications {
             const notifications = [...source.notifications];
             for (const n of notifications) {
                 try {
-                    if (!n._destroyed)
+                    if (!n._destroyed && !n.resident && n.isClearable?.() !== false)
                         n.destroy();
-                } catch (_) {}
+                } catch (e) {
+                    console.debug(e);
+                }
             }
         }
         this.changed();
     }
 
     destroy() {
+        Main.messageTray.bannerBlocked = false;
         const dateMenu = Main.panel.statusArea.dateMenu;
         if (dateMenu?._messageList)
             dateMenu._messageList.visible = Main.sessionMode.hasNotifications && !Main.sessionMode.isGreeter;
@@ -124,5 +129,6 @@ export class Notifications {
         for (const life of this.sourceLives.values())
             life.destroy();
         this.sourceLives.clear();
+        this.settings = null;
     }
 }

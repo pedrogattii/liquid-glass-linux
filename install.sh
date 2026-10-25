@@ -15,7 +15,9 @@ BOLD='\033[1m'
 NC='\033[0m' # No Color
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TARGET_HOME="${HOME}"
+REAL_USER="${SUDO_USER:-$USER}"
+TARGET_HOME="$(getent passwd "$REAL_USER" | cut -d: -f6)"
+TARGET_HOME="${TARGET_HOME:-$HOME}"
 
 echo -e "${CYAN}${BOLD}"
 echo "╔════════════════════════════════════════════════════════════════════╗"
@@ -68,7 +70,8 @@ fi
 
 echo -e "\n${BOLD}[3/6] Desplegando paquete de extensiones GNOME Shell...${NC}"
 EXT_DIR="${TARGET_HOME}/.local/share/gnome-shell/extensions"
-mkdir -p "${EXT_DIR}"
+USER_SCHEMAS_DIR="${TARGET_HOME}/.local/share/glib-2.0/schemas"
+mkdir -p "${EXT_DIR}" "${USER_SCHEMAS_DIR}"
 
 for ext_path in "${SCRIPT_DIR}/extensions/"*; do
     if [ -d "${ext_path}" ]; then
@@ -79,12 +82,16 @@ for ext_path in "${SCRIPT_DIR}/extensions/"*; do
         
         # Compilación de schemas si existen
         if [ -d "${EXT_DIR}/${ext_uuid}/schemas" ]; then
+            cp -f "${EXT_DIR}/${ext_uuid}/schemas/"*.gschema.xml "${USER_SCHEMAS_DIR}/" 2>/dev/null || true
             if command -v glib-compile-schemas &>/dev/null; then
                 glib-compile-schemas "${EXT_DIR}/${ext_uuid}/schemas" 2>/dev/null || true
             fi
         fi
     fi
 done
+if command -v glib-compile-schemas &>/dev/null; then
+    glib-compile-schemas "${USER_SCHEMAS_DIR}" 2>/dev/null || true
+fi
 echo -e "${GREEN}✓ Extensiones instaladas y schemas GSettings compilados.${NC}"
 
 echo -e "\n${BOLD}[4/6] Instalando Widget flotante de Spotify Liquid Glass...${NC}"
@@ -95,6 +102,8 @@ mkdir -p "${BIN_DIR}" "${DESKTOP_DIR}"
 cp -f "${SCRIPT_DIR}/widgets/bin/spotify-glass-widget" "${BIN_DIR}/spotify-glass-widget"
 chmod +x "${BIN_DIR}/spotify-glass-widget"
 cp -f "${SCRIPT_DIR}/widgets/desktop/spotify-glass-widget.desktop" "${DESKTOP_DIR}/spotify-glass-widget.desktop"
+cp -f "${SCRIPT_DIR}/scripts/live-wallpaper.sh" "${BIN_DIR}/liquid-live-wallpaper"
+chmod +x "${BIN_DIR}/liquid-live-wallpaper"
 
 if command -v update-desktop-database &>/dev/null; then
     update-desktop-database "${DESKTOP_DIR}" 2>/dev/null || true
@@ -140,5 +149,6 @@ echo -e "\n${BOLD}Atajos rápidos disponibles:${NC}"
 echo -e "  • ${CYAN}Super + I${NC}       Desplegar / Ocultar la Dynamic Island (música, alertas, controles)"
 echo -e "  • ${CYAN}Super + V${NC}       Historial del portapapeles translúcido"
 echo -e "  • ${CYAN}Super + M${NC}       Bandeja de avisos del sistema"
+echo -e "  • ${CYAN}liquid-live-wallpaper list${NC}   Fondos animados Liquid Glass / Sonoma"
 echo -e "\n${YELLOW}Nota para Wayland:${NC} Si no ves reflejados los cambios de inmediato en algunas apps GTK,"
 echo -e "cerrá sesión y volvé a ingresar (Log out / Log in) para refrescar todos los motores visuales.\n"
