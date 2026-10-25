@@ -1,0 +1,37 @@
+/* Browser chrome styling only. This does not make web pages or the native
+ * Firefox window transparent, and does not provide compositor backdrop blur. */
+@-moz-document url-prefix("chrome://browser/content/browser") {
+  :root {
+    --lgl-chrome: #182134;
+    --lgl-surface: rgba(215, 231, 255, 0.09);
+    --lgl-rim: rgba(222, 237, 255, 0.23);
+    --lgl-text: #edf3ff;
+    --toolbar-bgcolor: var(--lgl-chrome) !important;
+    --toolbar-color: var(--lgl-text) !important;
+    --lwt-accent-color: var(--lgl-chrome) !important;
+    --lwt-text-color: var(--lgl-text) !important;
+  }
+  #navigator-toolbox {
+    color: var(--lgl-text) !important;
+    background: linear-gradient(140deg, #25344c, #141b2b) !important;
+    border-bottom: 1px solid var(--lgl-rim) !important;
+  }
+  #TabsToolbar, #nav-bar, #PersonalToolbar {
+    background-color: transparent !important;
+  }
+  #urlbar-background, #searchbar {
+    border: 1px solid var(--lgl-rim) !important;
+    border-radius: 12px !important;
+    background-color: var(--lgl-surface) !important;
+  }
+  .tab-background[selected] {
+    background: var(--lgl-surface) !important;
+    border: 1px solid var(--lgl-rim) !important;
+    border-radius: 12px !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18) !important;
+  }
+  #urlbar[open] > #urlbar-background {
+    background-color: #202c42 !important;
+  }
+  #urlbar-input, #searchbar input { color: var(--lgl-text) !important; }
+}

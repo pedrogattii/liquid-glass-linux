@@ -1,6 +1,6 @@
 # 🪟 Liquid Glass Linux (macOS Sonoma / Tahoe Aesthetic)
 
-[![GNOME Shell](https://img.shields.io/badge/GNOME%20Shell-45%20|%2046%20|%2047%20|%2050-blue.svg)](https://www.gnome.org/)
+[![GNOME Shell](https://img.shields.io/badge/GNOME%20Shell-50-blue.svg)](https://www.gnome.org/)
 [![Display Server](https://img.shields.io/badge/Display-Wayland%20%2F%20X11-purple.svg)]()
 [![OS](https://img.shields.io/badge/Tested%20on-Fedora%2044-navy.svg)]()
 [![Style](https://img.shields.io/badge/Style-Liquid%20Glass%20%7C%20Apple%20macOS-cyan.svg)]()
@@ -30,19 +30,19 @@ Entorno de escritorio completo con estética **Liquid Glass** (*vidrio translúc
 1. **Dynamic Island 100% Unificada (`liquid-island`)**:
    - Píldora central única en la barra superior (elimina el botón duplicado de reloj/calendario).
    - Reloj y fecha en vivo integrados de forma nativa sin procesos en segundo plano innecesarios.
-   - **Chip multimedia condicional**: El reproductor solo aparece en la barra superior cuando hay música sonando; en reposo, la isla se contrae elegantemente a solo la hora y fecha.
+   - **Música universal y persistente**: MPRIS descubre reproductores compatibles y los comparte entre la isla y una tarjeta nativa. Al pausar o detener la canción, la tarjeta permanece. Solo desaparece al salir de la aplicación; cerrar su ventana no la oculta si sigue ejecutándose.
    - Menú desplegable con **pestañas intercambiables estilo macOS**: `[ 🔔 Notificaciones ]` y `[ 📅 Calendario ]`, con reproductor multimedia en la cabecera cuando está activo.
    - **Animaciones nativas de resortes (*Spring Physics*)**: Curvas `EASE_OUT_BACK` con resplandor de vidrio líquido para la llegada y despedida de notificaciones.
    - Atajo global configurable: **`Super + I`**.
 
-2. **Motor Universal de Fondos Animados (`liquid-live-wallpaper`)**:
-   - Soporte para bucles de video de alta definición (4K/1080p) con decodificación por hardware GPU (`hwdec=auto`) y bajo consumo de batería.
+2. **Herramienta de Fondos (`liquid-live-wallpaper`)**:
+   - Reproducción con `mpvpaper` en compositores compatibles con layer-shell, y `mpv` sobre X11. En GNOME Wayland aplica una imagen estática extraída del video; no reproduce un fondo animado.
    - Presets curados: *macOS Sonoma Horizon*, *Liquid Glass Chromatic Flow* y *Dark Acrylic Aurora*.
-   - Pausa automática al maximizar o abrir apps a pantalla completa.
+   - Los fondos de video son una herramienta opcional independiente del motor nativo de widgets.
 
 3. **Efecto Liquid Glass Auténtico (`blur-my-shell`)**:
    - Desenfoque translúcido por hardware (*Dual-Kawase shaders*) acelerado por GPU.
-   - Optimización de rendimiento con desenfoque estático (*Static Blur*) en panel y vista general para **0.0% de sobrecarga de CPU**.
+   - Optimización de rendimiento con desenfoque estático (*Static Blur*) en panel y vista general para reducir recapturas del fondo.
    - Lista blanca de ventanas con desenfoque translúcido (`spotify`, `ptyxis`, `nautilus`, etc.).
 
 4. **Tema WhiteSur Dark & Libadwaita**:
@@ -96,7 +96,7 @@ liquid-glass-linux/
 ## 🚀 Requisitos del Sistema
 
 - **Distribución:** Fedora Linux, Arch Linux, Ubuntu 24.04+, Debian o derivados.
-- **Entorno:** GNOME Shell 45, 46, 47 o 50 (Wayland o X11).
+- **Entorno:** GNOME Shell 50 (validado con 50.6 sobre Wayland).
 - **Paquetes recomendados:**
   - Fedora: `sudo dnf install -y glib2-devel fontconfig dconf python3-gobject gtk4 libadwaita`
   - Arch: `sudo pacman -S glib2 fontconfig dconf python-gobject gtk4 libadwaita`
@@ -127,6 +127,7 @@ liquid-glass-linux/
 
 | Atajo | Acción |
 | :--- | :--- |
+| **`Super + Shift + W`** | Activar / desactivar edición de widgets |
 | **`Super + I`** | Desplegar / Ocultar la **Dynamic Island** (reproductor, alertas, volumen) |
 | **`Super + V`** | Abrir menú del **Portapapeles** translúcido |
 | **`Super + M`** | Abrir bandeja de **Notificaciones y Calendario** |
@@ -136,6 +137,32 @@ liquid-glass-linux/
 ---
 
 ## 🎨 Ajustes y Personalización
+
+Abrí **Personalizar Liquid Glass…** desde el menú contextual del fondo o el botón de opciones de la isla. También podés usar `gnome-extensions prefs liquid-island@pedrogatti.local`.
+
+El centro incluye distribución, barra, isla, dock, apariencia, widgets e integraciones. Consultá la [guía de widgets nativos](docs/native-widgets.md). El catálogo propio ofrece música, reloj, calendario con agenda del sistema, clima, CPU, RAM, GPU, lanzadores, notas, tareas, temporizador y acceso rápido a Discord. Activá cada widget individualmente; por defecto solo Música está habilitado y aparece cuando existe un reproductor.
+
+**Super+Shift+W** activa el modo de edición. Arrastrá una cabecera para mover o el tirador para redimensionar. Con la cabecera enfocada, las flechas mueven y Shift+flechas redimensiona; Escape cancela el gesto. También hay controles numéricos y selección de monitor en preferencias. El dock admite los cuatro bordes y los grupos de la barra y los módulos de la isla se pueden reordenar.
+
+El desenfoque de las superficies propias usa la revisión de Blur My Shell incluida en este repositorio, que registra y libera sus superficies externas. Con otras versiones se utiliza el material translúcido de respaldo.
+
+Los widgets quedan bajo las ventanas y se ocultan durante bloqueo y overview. Las posiciones se guardan por conector de monitor; si falta una pantalla, el widget se recupera temporalmente en la principal. La distribución y las preferencias se exportan/importan como JSON versión 1. Los restablecimientos de sección incluyen Deshacer. Notas y tareas se guardan localmente y forman parte de la exportación.
+
+Calendario usa el servicio de calendario de GNOME; Clima necesita GWeather 4 y una ubicación configurada en GNOME Weather. Si faltan, el widget muestra su estado de disponibilidad. Los controles de voz de Discord requieren autorización RPC de Discord y no están habilitados: ver [investigación de integraciones](docs/integrations.md).
+
+**Actualización mientras trabajás:** editar o compilar el repositorio no recarga tu escritorio. El instalador completo aplica el perfil visual; ejecutalo cuando quieras aplicar esos cambios, sin `sudo`. No reinicia el sistema automáticamente. La validación gráfica puede ejecutarse en una sesión headless aislada con `tests/run-shell-smoke.sh` y no interviene en la sesión actual.
+
+
+Los temas de aplicaciones se preparan por separado y nunca reinician aplicaciones. Consultá [temas de terminales y navegadores](docs/app-themes.md). La herramienta muestra los cambios por defecto y solo los aplica con `--apply`:
+
+```bash
+./scripts/configure-app-themes.sh ptyxis
+./scripts/configure-app-themes.sh ghostty
+./scripts/configure-app-themes.sh firefox --profile /ruta/al/perfil
+./scripts/configure-app-themes.sh brave
+```
+
+El widget GPU solo consulta métricas cuando está visible. AMD usa sysfs; NVIDIA puede usar `nvidia-smi` con timeout. Los controladores que no exponen métricas muestran un estado no disponible, sin inventar porcentajes.
 
 ### Modificar la intensidad del desenfoque (*Glass Blur*)
 Podés ajustar la intensidad del vidrio directamente por terminal o desde la app **Extensiones**:
@@ -181,14 +208,23 @@ Si querés regresar a la apariencia estándar de fábrica de GNOME:
 
 ---
 
-## 🗺️ Próximas Personalizaciones (Roadmap)
+## 🗺️ Personalizaciones del Roadmap
 
-- [ ] Tema de vidrio esmerilado para la terminal **Ptyxis** y **Ghostty**.
-- [ ] Hoja de estilo `userChrome.css` con estética Liquid Glass para **Brave / Firefox**.
-- [ ] Widget de monitoreo de hardware (Uso de CPU, RAM y GPU NVIDIA/AMD en cristal).
-- [ ] Soporte para colores de acento dinámicos basados en la carátula de la canción en reproducción.
-- [ ] Integración con Discord y clientes de mensajería (burbujas translúcidas).
+- [x] Temas y transparencia para **Ptyxis** y **Ghostty**, con configuración optativa y respaldo.
+- [x] `userChrome.css` para **Firefox** y tema Chromium legítimo para **Brave**; Brave no admite `userChrome.css`.
+- [x] Widgets de **CPU, RAM y GPU**, con métricas nativas y consulta opcional NVIDIA.
+- [x] Acento dinámico desde la carátula, compartido con la isla y configurable.
+- [x] Burbujas translúcidas para notificaciones nativas de **Discord y mensajería**, con selección de aplicaciones. Los controles de voz siguen sujetos a permisos externos.
 
 ---
 
 **Creado y optimizado por [pedrogattii](https://github.com/pedrogattii)**.
+
+## Verificación de desarrollo
+
+```bash
+./tests/run-checks.sh
+./tests/run-shell-smoke.sh
+```
+
+Las pruebas de lógica requieren Node.js 24+, Bash y Python 3. Consultá los [resultados de validación](docs/validation.md). La segunda prueba requiere GNOME Shell 50, GJS, GTK4/libadwaita y `dbus-run-session`. Arranca únicamente una pantalla virtual con bus, ajustes y directorios temporales propios. No comprueba Spotify/Brave reales ni altera sus sesiones. La investigación REA está documentada en `docs/integrations.md`.

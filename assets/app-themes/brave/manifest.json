@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "Liquid Glass Linux — Midnight",
+  "version": "1.0.0",
+  "description": "Cool midnight colors for Chromium/Brave chrome. No window transparency or blur.",
+  "theme": {
+    "colors": {
+      "frame": [20, 27, 43],
+      "frame_inactive": [32, 42, 60],
+      "toolbar": [32, 44, 66],
+      "tab_text": [237, 243, 255],
+      "tab_background_text": [190, 208, 233],
+      "bookmark_text": [237, 243, 255],
+      "ntp_background": [20, 27, 43],
+      "ntp_text": [237, 243, 255],
+      "ntp_link": [140, 188, 255],
+      "button_background": [59, 85, 123]
+    },
+    "tints": {"buttons": [-1, 0.15, 0.85]}
+  }
+}
