@@ -1,0 +1,1173 @@
+#!/usr/bin/env python3
+"""
+Spotify Liquid Glass Widget (Apple macOS Glassmorphism Edition)
+Widget flotante Always-on-Top de alto rendimiento con desenfoque de vidrio líquido,
+controles MPRIS en tiempo real, esquinas squircle, modo píldora y redimensionamiento por esquina.
+"""
+
+import os
+import sys
+import socket
+
+# Forzar backend X11 bajo Wayland para garantizar Always-on-Top (keep_above) incondicional
+if 'GDK_BACKEND' not in os.environ:
+    os.environ['GDK_BACKEND'] = 'x11'
+
+SOCKET_PATH = f"/tmp/spotify_glass_{os.getuid()}.sock"
+
+def check_single_instance():
+    """Si ya existe una instancia abierta, la trae al frente o procesa comandos CLI."""
+    cmd = "SHOW"
+    if len(sys.argv) > 1:
+        arg = sys.argv[1].lower()
+        if arg in ("--center", "-c", "center"):
+            cmd = "CENTER"
+        elif arg in ("--toggle", "-t", "toggle"):
+            cmd = "TOGGLE"
+        elif arg in ("--pill", "-p", "pill"):
+            cmd = "PILL"
+        elif arg in ("--card", "card"):
+            cmd = "CARD"
+        elif arg in ("--status", "-s", "status"):
+            cmd = "STATUS"
+        elif arg in ("--sync", "sync"):
+            cmd = "SYNC"
+        elif arg in ("--show", "show"):
+            cmd = "SHOW"
+
+    if os.path.exists(SOCKET_PATH):
+        try:
+            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            s.connect(SOCKET_PATH)
+            s.sendall(f"{cmd}\n".encode())
+            if cmd == "STATUS":
+                print(s.recv(4096).decode())
+            s.close()
+            sys.exit(0)
+        except (socket.error, ConnectionRefusedError):
+            try:
+                os.unlink(SOCKET_PATH)
+            except OSError:
+                pass
+
+check_single_instance()
+
+import gi
+gi.require_version('Gtk', '3.0')
+gi.require_version('Gdk', '3.0')
+gi.require_version('Gio', '2.0')
+gi.require_version('GLib', '2.0')
+
+try:
+    gi.require_version('AyatanaAppIndicator3', '0.1')
+    from gi.repository import AyatanaAppIndicator3
+    HAS_APP_INDICATOR = True
+except Exception:
+    HAS_APP_INDICATOR = False
+
+from gi.repository import Gtk, Gdk, Gio, GLib, GdkPixbuf
+import urllib.request
+import threading
+import json
+import cairo
+
+GLib.set_prgname("spotify-glass-widget")
+GLib.set_application_name("Spotify Liquid Glass")
+
+CSS = """
+/* Transparencia total para la ventana base */
+window, .background {
+    background-color: transparent;
+}
+
+/* Tarjeta Principal Liquid Glass (Apple Obsidian Frosted Glass) */
+.glass-card {
+    background-color: rgba(18, 18, 24, 0.78);
+    background-image: linear-gradient(to bottom, 
+        rgba(255, 255, 255, 0.16) 0%, 
+        rgba(255, 255, 255, 0.04) 28%, 
+        rgba(0, 0, 0, 0.12) 65%, 
+        rgba(0, 0, 0, 0.38) 100%);
+    border-top: 1.5px solid rgba(255, 255, 255, 0.72);
+    border-left: 1px solid rgba(255, 255, 255, 0.26);
+    border-right: 1px solid rgba(255, 255, 255, 0.26);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 26px;
+    padding: 14px 16px;
+    box-shadow: 0 24px 50px rgba(0, 0, 0, 0.65), inset 0 1px 1px rgba(255, 255, 255, 0.40);
+    color: #ffffff;
+    font-family: 'SF Pro Display', 'SF Pro Text', -apple-system, sans-serif;
+}
+
+/* Modo Píldora Compacta (Dynamic Island) */
+.glass-pill {
+    background-color: rgba(16, 16, 22, 0.88);
+    background-image: linear-gradient(to bottom, 
+        rgba(255, 255, 255, 0.20) 0%, 
+        rgba(255, 255, 255, 0.04) 40%, 
+        rgba(0, 0, 0, 0.35) 100%);
+    border-top: 1.5px solid rgba(255, 255, 255, 0.78);
+    border-left: 1px solid rgba(255, 255, 255, 0.30);
+    border-right: 1px solid rgba(255, 255, 255, 0.30);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 22px;
+    padding: 6px 14px;
+    box-shadow: 0 16px 36px rgba(0, 0, 0, 0.60), inset 0 1px 1px rgba(255, 255, 255, 0.42);
+    color: #ffffff;
+    font-family: 'SF Pro Display', 'SF Pro Text', -apple-system, sans-serif;
+}
+
+/* Tipografía de Alto Contraste */
+.glass-title {
+    font-size: 11.5pt;
+    font-weight: 700;
+    color: #ffffff;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+}
+
+.glass-artist {
+    font-size: 9.5pt;
+    font-weight: 500;
+    color: rgba(255, 255, 255, 0.78);
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+/* Carátula Squircle */
+.glass-cover {
+    border-radius: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.30);
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.50);
+}
+
+/* Botones Semáforo Apple macOS */
+.traffic-btn {
+    border-radius: 50%;
+    min-width: 14px;
+    min-height: 14px;
+    padding: 0;
+    font-size: 7.5pt;
+    font-weight: 900;
+    border: none;
+    transition: all 120ms ease;
+}
+
+.traffic-close {
+    background-color: #ff5f56;
+    color: #7d0000;
+}
+.traffic-close:hover {
+    background-color: #ff3b30;
+    box-shadow: 0 0 8px rgba(255, 59, 48, 0.8);
+}
+
+.traffic-min {
+    background-color: #ffbd2e;
+    color: #875400;
+}
+.traffic-min:hover {
+    background-color: #ff9500;
+    box-shadow: 0 0 8px rgba(255, 149, 0, 0.8);
+}
+
+.traffic-scale {
+    background-color: #27c93f;
+    color: #005912;
+}
+.traffic-scale:hover {
+    background-color: #34c759;
+    box-shadow: 0 0 8px rgba(52, 199, 89, 0.8);
+}
+
+/* Botones de Control de Reproducción */
+.glass-btn {
+    background-color: rgba(255, 255, 255, 0.12);
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    border-top: 1px solid rgba(255, 255, 255, 0.45);
+    border-radius: 16px;
+    padding: 4px 12px;
+    color: #ffffff;
+    font-size: 10pt;
+    transition: all 120ms ease;
+}
+
+.glass-btn:hover {
+    background-color: rgba(255, 255, 255, 0.28);
+    border-color: rgba(255, 255, 255, 0.55);
+}
+
+.glass-btn:active {
+    background-color: rgba(255, 255, 255, 0.40);
+}
+
+/* Botón Destacado Play/Pausa Spotify Neón */
+.glass-play-btn {
+    background-color: #1ed760;
+    border: 1px solid rgba(255, 255, 255, 0.40);
+    border-top: 1.5px solid rgba(255, 255, 255, 0.75);
+    border-radius: 18px;
+    padding: 5px 16px;
+    color: #000000;
+    font-size: 11pt;
+    font-weight: 800;
+    box-shadow: 0 4px 16px rgba(30, 215, 96, 0.60);
+    transition: all 120ms ease;
+}
+
+.glass-play-btn:hover {
+    background-color: #24e86c;
+    box-shadow: 0 6px 22px rgba(30, 215, 96, 0.85);
+}
+
+.glass-play-btn:active {
+    background-color: #1aa34a;
+}
+
+/* Barra de Progreso Interactiva */
+.time-label {
+    font-size: 7.5pt;
+    font-weight: 500;
+    color: rgba(255, 255, 255, 0.65);
+    font-family: 'SF Pro Text', -apple-system, sans-serif;
+    margin-bottom: 2px;
+}
+
+progressbar {
+    min-height: 8px;
+    padding: 6px 0;
+}
+
+progressbar trough {
+    background-color: rgba(255, 255, 255, 0.20);
+    border-radius: 4px;
+    min-height: 6px;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4);
+    transition: all 150ms ease;
+}
+
+progressbar:hover trough {
+    background-color: rgba(255, 255, 255, 0.35);
+    min-height: 8px;
+}
+
+progressbar progress {
+    background-color: #1ed760;
+    border-radius: 4px;
+    min-height: 6px;
+    box-shadow: 0 0 10px rgba(30, 215, 96, 0.75);
+    transition: all 150ms ease;
+}
+
+progressbar:hover progress {
+    background-color: #24e86c;
+    min-height: 8px;
+    box-shadow: 0 0 14px rgba(36, 232, 108, 0.90);
+}
+
+/* Agarre de Redimensionamiento en la esquina inferior derecha */
+.resize-grip {
+    color: rgba(255, 255, 255, 0.35);
+    font-size: 10pt;
+    font-weight: 900;
+    padding: 0 2px 2px 0;
+}
+.resize-grip:hover {
+    color: rgba(255, 255, 255, 0.85);
+}
+"""
+
+MODE_CARD = 0
+MODE_PILL = 1
+
+class SpotifyGlassWidget:
+    def __init__(self):
+        self.mode = MODE_CARD
+        self.is_playing = False
+        self.last_art_url = None
+        self.timer_id = None
+        self.dbus_proxy = None
+        self.prop_changed_id = None
+        self.indicator = None
+        self.card_w = 350
+        self.card_h = 160
+        self.current_cover_size = 78
+        self.track_length_us = 0
+        self.current_track_id = ""
+        self.current_pos_us = 0
+        self.last_seek_time = 0
+        self.last_scrub_motion_time = 0
+        self.is_scrubbing = False
+
+        self._build_ui()
+        self._setup_dbus()
+        self._start_ipc_server()
+
+    def _build_ui(self):
+        # 1. Ventana GTK3 con soporte RGBA transparente y redimensionable
+        self.win = Gtk.Window(type=Gtk.WindowType.TOPLEVEL)
+        self.win.set_title("Spotify Liquid Glass")
+        self.win.set_wmclass("spotify-glass-widget", "spotify-glass-widget")
+        self.win.set_decorated(False)
+        self.win.set_resizable(True)
+        self.win.set_app_paintable(True)
+        
+        # Always-on-top garantizado en XWayland / Mutter
+        self.win.set_keep_above(True)
+        self.win.set_skip_taskbar_hint(True)
+        self.win.set_skip_pager_hint(True)
+        self.win.stick()
+
+        screen = self.win.get_screen()
+        visual = screen.get_rgba_visual()
+        if visual and screen.is_composited():
+            self.win.set_visual(visual)
+
+        # Grayscale antialiasing para evitar aberración cromática en ventanas transparentes
+        font_opt = cairo.FontOptions()
+        font_opt.set_antialias(cairo.ANTIALIAS_GRAY)
+        screen.set_font_options(font_opt)
+
+        self.win.connect("draw", self._on_draw)
+        self.win.connect("button-press-event", self._on_window_press)
+        self.win.connect("button-release-event", self._on_window_release)
+        self.win.connect("map", self._on_window_map)
+        self.win.connect("size-allocate", self._on_size_allocate)
+        self.win.add_events(Gdk.EventMask.POINTER_MOTION_MASK | Gdk.EventMask.BUTTON_RELEASE_MASK)
+        self.win.connect("motion-notify-event", self._on_window_motion)
+
+        # 2. Cargar CSS
+        css_provider = Gtk.CssProvider()
+        css_provider.load_from_data(CSS.encode('utf-8'))
+        Gtk.StyleContext.add_provider_for_screen(
+            screen,
+            css_provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+
+        # 3. Contenedor Raíz
+        self.main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+
+        # --- A. Vista Tarjeta ---
+        self.card_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        self.card_box.get_style_context().add_class("glass-card")
+
+        # Fila Superior: Carátula + Metadatos + Semáforo
+        header_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+
+        # Carátula
+        self.cover_img = Gtk.Image.new_from_icon_name("audio-x-generic-symbolic", Gtk.IconSize.DIALOG)
+        self.cover_img.set_pixel_size(self.current_cover_size)
+        self.cover_img.get_style_context().add_class("glass-cover")
+        header_row.pack_start(self.cover_img, False, False, 0)
+
+        # Info de canción
+        info_col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+        info_col.set_valign(Gtk.Align.CENTER)
+
+        self.title_label = Gtk.Label(label="Spotify")
+        self.title_label.set_xalign(0.0)
+        self.title_label.get_style_context().add_class("glass-title")
+        self.title_label.set_ellipsize(3)
+        self.title_label.set_max_width_chars(20)
+
+        self.artist_label = Gtk.Label(label="Esperando reproducción...")
+        self.artist_label.set_xalign(0.0)
+        self.artist_label.get_style_context().add_class("glass-artist")
+        self.artist_label.set_ellipsize(3)
+        self.artist_label.set_max_width_chars(24)
+
+        info_col.pack_start(self.title_label, False, False, 0)
+        info_col.pack_start(self.artist_label, False, False, 0)
+        header_row.pack_start(info_col, True, True, 0)
+
+        # Botones Semáforo (Cerrar / Minimizar / Reset Tamaño)
+        traffic_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        traffic_box.set_valign(Gtk.Align.START)
+
+        self.btn_close = Gtk.Button(label="✕")
+        self.btn_close.get_style_context().add_class("traffic-btn")
+        self.btn_close.get_style_context().add_class("traffic-close")
+        self.btn_close.connect("clicked", lambda b: self.win.hide())
+
+        self.btn_min = Gtk.Button(label="—")
+        self.btn_min.get_style_context().add_class("traffic-btn")
+        self.btn_min.get_style_context().add_class("traffic-min")
+        self.btn_min.connect("clicked", lambda b: self.set_mode(MODE_PILL))
+
+        self.btn_scale = Gtk.Button(label="⤢")
+        self.btn_scale.get_style_context().add_class("traffic-btn")
+        self.btn_scale.get_style_context().add_class("traffic-scale")
+        self.btn_scale.connect("clicked", self._toggle_default_sizes)
+
+        traffic_box.pack_start(self.btn_close, False, False, 0)
+        traffic_box.pack_start(self.btn_min, False, False, 0)
+        traffic_box.pack_start(self.btn_scale, False, False, 0)
+        header_row.pack_start(traffic_box, False, False, 0)
+
+        self.card_box.pack_start(header_row, True, True, 0)
+
+        # Sección de Progreso Interactiva (Adelantar / Atrasar)
+        self.progress_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+
+        time_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        self.lbl_time_cur = Gtk.Label(label="0:00")
+        self.lbl_time_cur.set_xalign(0.0)
+        self.lbl_time_cur.get_style_context().add_class("time-label")
+
+        self.lbl_time_total = Gtk.Label(label="0:00")
+        self.lbl_time_total.set_xalign(1.0)
+        self.lbl_time_total.get_style_context().add_class("time-label")
+
+        time_row.pack_start(self.lbl_time_cur, True, True, 0)
+        time_row.pack_end(self.lbl_time_total, True, True, 0)
+        self.progress_box.pack_start(time_row, False, False, 0)
+
+        self.progress_event = Gtk.EventBox()
+        self.progress_event.set_visible_window(True)
+        self.progress_event.set_size_request(-1, 22)
+        self.progress_event.add_events(
+            Gdk.EventMask.POINTER_MOTION_MASK
+            | Gdk.EventMask.BUTTON_PRESS_MASK
+            | Gdk.EventMask.BUTTON_RELEASE_MASK
+            | Gdk.EventMask.SCROLL_MASK
+        )
+
+        self.progress_bar = Gtk.ProgressBar()
+        self.progress_bar.set_fraction(0.0)
+        self.progress_bar.set_valign(Gtk.Align.CENTER)
+        self.progress_event.add(self.progress_bar)
+
+        self.progress_event.connect("button-press-event", self._on_seek_press)
+        self.progress_event.connect("motion-notify-event", self._on_seek_motion)
+        self.progress_event.connect("button-release-event", self._on_seek_release)
+        self.progress_event.connect("grab-broken-event", self._on_seek_grab_broken)
+        self.progress_event.connect("scroll-event", self._on_seek_scroll)
+        self.progress_event.connect("realize", self._on_seek_realize)
+
+        self.progress_box.pack_start(self.progress_event, False, False, 0)
+        self.card_box.pack_start(self.progress_box, False, False, 0)
+
+        # Fila de Controles de Reproducción y Agarre de Esquina
+        bottom_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+
+        ctrl_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        ctrl_row.set_halign(Gtk.Align.CENTER)
+
+        self.btn_prev = Gtk.Button(label="⏮")
+        self.btn_prev.get_style_context().add_class("glass-btn")
+        self.btn_prev.connect("clicked", lambda b: self._call_player("Previous"))
+
+        self.btn_play = Gtk.Button(label="▶")
+        self.btn_play.get_style_context().add_class("glass-play-btn")
+        self.btn_play.connect("clicked", lambda b: self._call_player("PlayPause"))
+
+        self.btn_next = Gtk.Button(label="⏭")
+        self.btn_next.get_style_context().add_class("glass-btn")
+        self.btn_next.connect("clicked", lambda b: self._call_player("Next"))
+
+        self.btn_raise = Gtk.Button(label="🎧")
+        self.btn_raise.get_style_context().add_class("glass-btn")
+        self.btn_raise.connect("clicked", lambda b: self._raise_spotify())
+
+        ctrl_row.pack_start(self.btn_prev, False, False, 0)
+        ctrl_row.pack_start(self.btn_play, False, False, 0)
+        ctrl_row.pack_start(self.btn_next, False, False, 0)
+        ctrl_row.pack_start(self.btn_raise, False, False, 0)
+        bottom_row.pack_start(ctrl_row, True, True, 0)
+
+        # Agarre visual interactivo en la esquina inferior derecha
+        self.grip_event = Gtk.EventBox()
+        self.grip_event.set_visible_window(False)
+        self.grip_label = Gtk.Label(label="⌟")
+        self.grip_label.get_style_context().add_class("resize-grip")
+        self.grip_event.add(self.grip_label)
+        self.grip_event.connect("button-press-event", self._on_grip_press)
+        self.grip_event.connect("realize", self._on_grip_realize)
+        bottom_row.pack_end(self.grip_event, False, False, 0)
+
+        self.card_box.pack_start(bottom_row, False, False, 0)
+
+        # --- B. Vista Píldora Compacta (Dynamic Island) ---
+        self.pill_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        self.pill_box.get_style_context().add_class("glass-pill")
+
+        self.btn_pill_play = Gtk.Button(label="▶")
+        self.btn_pill_play.get_style_context().add_class("glass-play-btn")
+        self.btn_pill_play.connect("clicked", lambda b: self._call_player("PlayPause"))
+        self.pill_box.pack_start(self.btn_pill_play, False, False, 0)
+
+        self.pill_title = Gtk.Label(label="Spotify")
+        self.pill_title.set_xalign(0.0)
+        self.pill_title.get_style_context().add_class("glass-title")
+        self.pill_title.set_ellipsize(3)
+        self.pill_title.set_max_width_chars(16)
+        self.pill_box.pack_start(self.pill_title, True, True, 0)
+
+        self.btn_expand = Gtk.Button(label="+")
+        self.btn_expand.get_style_context().add_class("traffic-btn")
+        self.btn_expand.get_style_context().add_class("traffic-scale")
+        self.btn_expand.set_valign(Gtk.Align.CENTER)
+        self.btn_expand.connect("clicked", lambda b: self.set_mode(MODE_CARD))
+        self.pill_box.pack_start(self.btn_expand, False, False, 0)
+
+        self.btn_pill_close = Gtk.Button(label="✕")
+        self.btn_pill_close.get_style_context().add_class("traffic-btn")
+        self.btn_pill_close.get_style_context().add_class("traffic-close")
+        self.btn_pill_close.set_valign(Gtk.Align.CENTER)
+        self.btn_pill_close.connect("clicked", lambda b: self.win.hide())
+        self.pill_box.pack_start(self.btn_pill_close, False, False, 0)
+
+        # Empacar inicialmente la tarjeta
+        self.main_box.pack_start(self.card_box, True, True, 0)
+        self.win.add(self.main_box)
+
+        # Ubicación inicial en esquina superior derecha
+        disp = Gdk.Display.get_default()
+        if disp:
+            monitor = disp.get_primary_monitor() or disp.get_monitor(0)
+            if monitor:
+                geo = monitor.get_geometry()
+                init_x = max(20, geo.x + geo.width - 390)
+                init_y = max(40, geo.y + 60)
+                self.win.move(init_x, init_y)
+
+        self.win.show_all()
+
+    def _on_grip_realize(self, widget):
+        window = widget.get_window()
+        if window:
+            disp = Gdk.Display.get_default()
+            cursor = Gdk.Cursor.new_for_display(disp, Gdk.CursorType.BOTTOM_RIGHT_CORNER)
+            window.set_cursor(cursor)
+
+    def _on_grip_press(self, widget, event):
+        if event.button == 1:
+            self.win.begin_resize_drag(
+                Gdk.WindowEdge.SOUTH_EAST,
+                event.button,
+                int(event.x_root),
+                int(event.y_root),
+                event.time
+            )
+            return True
+        return False
+
+    def _on_size_allocate(self, widget, alloc):
+        if self.mode == MODE_CARD:
+            self.card_w = max(260, alloc.width)
+            self.card_h = max(130, alloc.height)
+            
+            # Ajustar dinámicamente el tamaño de la carátula al redimensionar
+            target_cover = min(110, max(56, int(alloc.height * 0.46)))
+            if abs(target_cover - self.current_cover_size) >= 6:
+                self.current_cover_size = target_cover
+                self.cover_img.set_pixel_size(target_cover)
+                if self.last_art_url:
+                    self._apply_cover_pixbuf("/tmp/spotify_glass_cover.jpg")
+
+    def _setup_indicator(self):
+        # Desactivado para mantener la barra superior limpia sin iconos innecesarios
+        pass
+
+    def _resize_card(self, w, h):
+        if self.mode != MODE_CARD:
+            self.set_mode(MODE_CARD)
+        self.card_w = w
+        self.card_h = h
+        self.win.resize(w, h)
+
+    def _toggle_default_sizes(self, button=None):
+        if self.card_w >= 420:
+            self._resize_card(350, 160)
+        else:
+            self._resize_card(460, 190)
+
+    def set_mode(self, mode):
+        self.mode = mode
+        if mode == MODE_PILL:
+            # Desmontar tarjeta para permitir contracción física al tamaño mínimo de la píldora
+            if self.card_box.get_parent():
+                self.main_box.remove(self.card_box)
+            if not self.pill_box.get_parent():
+                self.main_box.pack_start(self.pill_box, True, True, 0)
+            self.pill_box.show_all()
+            self.win.resize(230, 44)
+        else: # MODE_CARD
+            # Desmontar píldora y restaurar tarjeta
+            if self.pill_box.get_parent():
+                self.main_box.remove(self.pill_box)
+            if not self.card_box.get_parent():
+                self.main_box.pack_start(self.card_box, True, True, 0)
+            self.card_box.show_all()
+            self.win.resize(self.card_w, self.card_h)
+
+        self.win.show_all()
+        self.win.present()
+        self.win.set_keep_above(True)
+
+    def toggle_visibility(self):
+        if self.win.is_visible():
+            self.win.hide()
+        else:
+            self._unhide()
+
+    def _on_draw(self, widget, cr):
+        # Limpiar fondo con transparencia total Cairo
+        cr.set_source_rgba(0, 0, 0, 0)
+        cr.set_operator(cairo.OPERATOR_SOURCE)
+        cr.paint()
+        cr.set_operator(cairo.OPERATOR_OVER)
+        return False
+
+    def _on_window_map(self, widget):
+        self.win.set_keep_above(True)
+        self.win.stick()
+        os.system('DISPLAY=:0 xprop -name "Spotify Liquid Glass" -f _NET_WM_STATE 32a -set _NET_WM_STATE _NET_WM_STATE_ABOVE,_NET_WM_STATE_STICKY 2>/dev/null &')
+
+    def _is_in_progress_area(self, x, y):
+        if self.mode != MODE_CARD or not hasattr(self, 'progress_box'):
+            return False
+        try:
+            coords = self.progress_box.translate_coordinates(self.win, 0, 0)
+            if not coords:
+                return False
+            bx, by = coords
+            alloc = self.progress_box.get_allocation()
+            return (bx - 12 <= x <= bx + alloc.width + 12) and (by - 6 <= y <= by + alloc.height + 6)
+        except Exception:
+            return False
+
+    def _on_window_press(self, widget, event):
+        alloc = self.win.get_allocation()
+        # Si se hace clic en la esquina inferior derecha (últimos 24x24 px), iniciar redimensionamiento
+        if event.x >= alloc.width - 24 and event.y >= alloc.height - 24:
+            self.win.begin_resize_drag(
+                Gdk.WindowEdge.SOUTH_EAST,
+                event.button,
+                int(event.x_root),
+                int(event.y_root),
+                event.time
+            )
+            return True
+
+        # Si se hace clic en la zona de la barra de progreso, ejecutar seek y NUNCA arrastrar la ventana
+        if self._is_in_progress_area(event.x, event.y):
+            self._on_seek_press(widget, event)
+            return True
+
+        if event.button == 1:
+            # Arrastre suave con compositor (solo si NO estamos haciendo seek)
+            if not self.is_scrubbing:
+                self.win.begin_move_drag(
+                    event.button,
+                    int(event.x_root),
+                    int(event.y_root),
+                    event.time
+                )
+            return True
+        return False
+
+    def _on_window_motion(self, widget, event):
+        if self.is_scrubbing and (event.state & Gdk.ModifierType.BUTTON1_MASK):
+            now = GLib.get_monotonic_time()
+            self.last_seek_time = now
+            self.last_scrub_motion_time = now
+            fraction = self._calc_fraction(widget, event)
+            self._update_ui_progress(fraction)
+            return True
+
+        if self.mode == MODE_CARD:
+            alloc = self.win.get_allocation()
+            window = self.win.get_window()
+            if window:
+                disp = Gdk.Display.get_default()
+                if event.x >= alloc.width - 24 and event.y >= alloc.height - 24:
+                    cursor = Gdk.Cursor.new_for_display(disp, Gdk.CursorType.BOTTOM_RIGHT_CORNER)
+                    window.set_cursor(cursor)
+                else:
+                    window.set_cursor(None)
+        return False
+
+    def _calc_fraction(self, widget, event):
+        alloc = self.progress_bar.get_allocation()
+        width = max(1.0, float(alloc.width))
+        if widget == self.progress_bar:
+            rel_x = event.x
+        else:
+            coords = widget.translate_coordinates(self.progress_bar, int(event.x), int(event.y))
+            if coords:
+                rel_x = coords[0]
+            else:
+                rel_x = event.x - alloc.x
+        return max(0.0, min(1.0, float(rel_x) / width))
+
+    def _update_ui_progress(self, fraction):
+        fraction = max(0.0, min(1.0, fraction))
+        self.progress_bar.set_fraction(fraction)
+        if self.track_length_us > 0:
+            current_us = int(fraction * self.track_length_us)
+            self.lbl_time_cur.set_text(self._format_time(current_us))
+
+    def _on_seek_realize(self, widget):
+        win = widget.get_window()
+        if win:
+            disp = Gdk.Display.get_default()
+            cursor = Gdk.Cursor.new_for_display(disp, Gdk.CursorType.HAND2)
+            win.set_cursor(cursor)
+
+    def _on_seek_grab_broken(self, widget, event):
+        if self.is_scrubbing:
+            self.is_scrubbing = False
+            if Gtk.grab_get_current() == self.progress_event:
+                try:
+                    self.progress_event.grab_remove()
+                except Exception:
+                    pass
+        return False
+
+    def _on_seek_press(self, widget, event):
+        if event.button == 1:
+            self.is_scrubbing = True
+            now = GLib.get_monotonic_time()
+            self.last_seek_time = now
+            self.last_scrub_motion_time = now
+            try:
+                self.progress_event.grab_add()
+            except Exception:
+                pass
+            fraction = self._calc_fraction(widget, event)
+            self._update_ui_progress(fraction)
+            if self.track_length_us > 0:
+                target_us = int(fraction * self.track_length_us)
+                self._seek_to(target_us)
+            return True
+        return False
+
+    def _on_seek_motion(self, widget, event):
+        if self.is_scrubbing and (event.state & Gdk.ModifierType.BUTTON1_MASK):
+            now = GLib.get_monotonic_time()
+            self.last_seek_time = now
+            self.last_scrub_motion_time = now
+            fraction = self._calc_fraction(widget, event)
+            self._update_ui_progress(fraction)
+            return True
+        return False
+
+    def _on_seek_release(self, widget, event):
+        if event.button == 1 and self.is_scrubbing:
+            self.is_scrubbing = False
+            if Gtk.grab_get_current() == self.progress_event:
+                try:
+                    self.progress_event.grab_remove()
+                except Exception:
+                    pass
+            self.last_seek_time = GLib.get_monotonic_time()
+            fraction = self._calc_fraction(widget, event)
+            self._update_ui_progress(fraction)
+            if self.track_length_us > 0:
+                target_us = int(fraction * self.track_length_us)
+                self._seek_to(target_us)
+            return True
+        return False
+
+    def _on_window_release(self, widget, event):
+        if event.button == 1 and self.is_scrubbing:
+            self.is_scrubbing = False
+            if Gtk.grab_get_current() == self.progress_event:
+                try:
+                    self.progress_event.grab_remove()
+                except Exception:
+                    pass
+            self.last_seek_time = GLib.get_monotonic_time()
+            fraction = self._calc_fraction(widget, event)
+            self._update_ui_progress(fraction)
+            if self.track_length_us > 0:
+                target_us = int(fraction * self.track_length_us)
+                self._seek_to(target_us)
+            return True
+        return False
+
+    def _on_seek_scroll(self, widget, event):
+        if event.direction == Gdk.ScrollDirection.UP:
+            self._seek_relative(5000000) # +5 segundos
+            return True
+        elif event.direction == Gdk.ScrollDirection.DOWN:
+            self._seek_relative(-5000000) # -5 segundos
+            return True
+        elif event.direction == Gdk.ScrollDirection.SMOOTH:
+            if event.delta_y < 0:
+                self._seek_relative(5000000)
+            elif event.delta_y > 0:
+                self._seek_relative(-5000000)
+            return True
+        return False
+
+    def _seek_to(self, target_pos_us):
+        if not self.dbus_proxy:
+            return
+        self.last_seek_time = GLib.get_monotonic_time()
+        self.current_pos_us = target_pos_us
+        if self.track_length_us > 0:
+            self._update_ui_progress(float(target_pos_us) / float(self.track_length_us))
+
+        if self.current_track_id and self.current_track_id.startswith("/"):
+            try:
+                self.dbus_proxy.call(
+                    "SetPosition",
+                    GLib.Variant("(ox)", (self.current_track_id, target_pos_us)),
+                    Gio.DBusCallFlags.NONE,
+                    -1,
+                    None,
+                    self._on_seek_finish
+                )
+            except Exception as e:
+                print(f"[SpotifyGlass] Seek SetPosition error: {e}", flush=True)
+                self._fallback_seek_offset(target_pos_us)
+        else:
+            self._fallback_seek_offset(target_pos_us)
+
+    def _fallback_seek_offset(self, target_pos_us):
+        if not self.dbus_proxy:
+            return
+        offset_us = target_pos_us - self.current_pos_us
+        try:
+            self.dbus_proxy.call(
+                "Seek",
+                GLib.Variant("(x)", (offset_us,)),
+                Gio.DBusCallFlags.NONE,
+                -1,
+                None,
+                self._on_seek_finish
+            )
+        except Exception as e:
+            print(f"[SpotifyGlass] Fallback seek error: {e}", flush=True)
+
+    def _on_seek_finish(self, proxy, res):
+        try:
+            proxy.call_finish(res)
+        except Exception as e:
+            print(f"[SpotifyGlass] Seek finish callback error: {e}", flush=True)
+            GLib.idle_add(self._sync_player)
+
+    def _seek_relative(self, offset_us):
+        if not self.dbus_proxy:
+            return
+        self.last_seek_time = GLib.get_monotonic_time()
+        new_pos = max(0, min(self.track_length_us, self.current_pos_us + offset_us))
+        self.current_pos_us = new_pos
+        if self.track_length_us > 0:
+            self._update_ui_progress(float(new_pos) / float(self.track_length_us))
+        try:
+            self.dbus_proxy.call(
+                "Seek",
+                GLib.Variant("(x)", (offset_us,)),
+                Gio.DBusCallFlags.NONE,
+                -1,
+                None,
+                self._on_seek_finish
+            )
+        except Exception as e:
+            print(f"[SpotifyGlass] Seek relative error: {e}")
+
+    @staticmethod
+    def _format_time(us):
+        s = max(0, int(us / 1000000))
+        return f"{s // 60}:{s % 60:02d}"
+
+    def _setup_dbus(self):
+        Gio.DBusProxy.new_for_bus(
+            Gio.BusType.SESSION,
+            Gio.DBusProxyFlags.NONE,
+            None,
+            "org.mpris.MediaPlayer2.spotify",
+            "/org/mpris/MediaPlayer2",
+            "org.mpris.MediaPlayer2.Player",
+            None,
+            self._on_dbus_ready
+        )
+
+    def _on_dbus_ready(self, source, result):
+        try:
+            self.dbus_proxy = Gio.DBusProxy.new_for_bus_finish(result)
+            self.prop_changed_id = self.dbus_proxy.connect(
+                "g-properties-changed",
+                lambda p, changed, invalidated: GLib.idle_add(self._sync_player)
+            )
+            self.signal_id = self.dbus_proxy.connect(
+                "g-signal",
+                self._on_dbus_signal
+            )
+            self.name_owner_id = self.dbus_proxy.connect(
+                "notify::g-name-owner",
+                lambda p, pspec: GLib.idle_add(self._sync_player)
+            )
+            GLib.idle_add(self._sync_player)
+        except Exception as e:
+            print(f"[SpotifyGlass] Error DBus: {e}")
+
+    def _on_dbus_signal(self, proxy, sender_name, signal_name, parameters):
+        if signal_name == "Seeked":
+            try:
+                new_pos = parameters.unpack()[0]
+                self.current_pos_us = new_pos
+                self.last_seek_time = GLib.get_monotonic_time()
+                if self.track_length_us > 0:
+                    self._update_ui_progress(float(new_pos) / float(self.track_length_us))
+            except Exception as e:
+                print(f"[SpotifyGlass] Seeked signal error: {e}")
+
+    def _sync_player(self):
+        if not self.dbus_proxy:
+            return False
+
+        owner = self.dbus_proxy.get_name_owner()
+        if not owner:
+            self.is_playing = False
+            self.btn_play.set_label("▶")
+            self.btn_pill_play.set_label("▶")
+            self.title_label.set_text("Spotify")
+            self.pill_title.set_text("Spotify")
+            self.artist_label.set_text("Spotify cerrado")
+            self.current_pos_us = 0
+            self.track_length_us = 0
+            self._update_ui_progress(0.0)
+            self.lbl_time_cur.set_text("0:00")
+            self.lbl_time_total.set_text("0:00")
+            if self.timer_id:
+                GLib.source_remove(self.timer_id)
+                self.timer_id = None
+            return False
+
+        # Estado de reproducción
+        status_var = self.dbus_proxy.get_cached_property("PlaybackStatus")
+        status = status_var.unpack() if status_var else "Stopped"
+        self.is_playing = (status == "Playing")
+
+        icon_label = "⏸" if self.is_playing else "▶"
+        self.btn_play.set_label(icon_label)
+        self.btn_pill_play.set_label(icon_label)
+
+        # Metadatos
+        meta_var = self.dbus_proxy.get_cached_property("Metadata")
+        if meta_var:
+            meta = meta_var.unpack()
+            title = meta.get("xesam:title", "Spotify")
+            artists = meta.get("xesam:artist", ["Sin artista"])
+            art_url = meta.get("mpris:artUrl", "")
+
+            short_title = title if len(title) <= 22 else title[:20] + "…"
+            self.title_label.set_text(short_title)
+            self.pill_title.set_text(short_title)
+
+            artist_text = ", ".join(artists)
+            short_artist = artist_text if len(artist_text) <= 26 else artist_text[:24] + "…"
+            self.artist_label.set_text(short_artist)
+
+            track_id = meta.get("mpris:trackid", "")
+            length = meta.get("mpris:length", 0)
+
+            # Si cambió de canción
+            if track_id != self.current_track_id:
+                self.current_track_id = track_id
+                self.track_length_us = length
+                self.current_pos_us = 0
+                self.last_seek_time = 0
+                self.is_scrubbing = False
+                if Gtk.grab_get_current() == self.progress_event:
+                    try:
+                        self.progress_event.grab_remove()
+                    except Exception:
+                        pass
+                if length > 0:
+                    self.lbl_time_total.set_text(self._format_time(length))
+                self._update_ui_progress(0.0)
+                self._request_position()
+            else:
+                self.track_length_us = length
+                if length > 0:
+                    self.lbl_time_total.set_text(self._format_time(length))
+
+            if art_url and art_url != self.last_art_url:
+                self.last_art_url = art_url
+                threading.Thread(target=self._fetch_cover_async, args=(art_url,), daemon=True).start()
+
+        # Mantener siempre el timer activo cada 1 segundo (consume 0% CPU en pausa)
+        if not self.timer_id:
+            self.timer_id = GLib.timeout_add(1000, self._update_progress)
+        self._request_position()
+
+        return False
+
+    def _update_progress(self):
+        try:
+            if not self.dbus_proxy:
+                return True
+
+            now = GLib.get_monotonic_time()
+
+            # Failsafe de arrastre atascado si no hay movimiento por > 4 segundos
+            if self.is_scrubbing:
+                if (now - self.last_scrub_motion_time) > 4000000:
+                    self.is_scrubbing = False
+                    if Gtk.grab_get_current() == self.progress_event:
+                        try:
+                            self.progress_event.grab_remove()
+                        except Exception:
+                            pass
+                else:
+                    return True
+
+            # Si el usuario hizo seek hace menos de 1.2s, esperar que el buffer se asiente
+            if (now - self.last_seek_time) < 1200000:
+                return True
+
+            if self.is_playing:
+                self._request_position()
+        except Exception as e:
+            print(f"[SpotifyGlass] _update_progress exception: {e}", flush=True)
+        return True
+
+    def _request_position(self):
+        if not self.dbus_proxy:
+            return
+        try:
+            self.dbus_proxy.call(
+                "org.freedesktop.DBus.Properties.Get",
+                GLib.Variant("(ss)", ("org.mpris.MediaPlayer2.Player", "Position")),
+                Gio.DBusCallFlags.NONE,
+                -1,
+                None,
+                self._on_get_position_finish
+            )
+        except Exception as e:
+            print(f"[SpotifyGlass] request_position error: {e}", flush=True)
+
+    def _on_get_position_finish(self, proxy, res):
+        try:
+            val = proxy.call_finish(res)
+            pos = val.unpack()[0]
+            now = GLib.get_monotonic_time()
+            if not self.is_scrubbing and (now - self.last_seek_time >= 1200000):
+                self.current_pos_us = pos
+                if self.track_length_us > 0:
+                    self._update_ui_progress(float(pos) / float(self.track_length_us))
+        except Exception as e:
+            print(f"[SpotifyGlass] _on_get_position_finish error: {e}", flush=True)
+
+    def _fetch_cover_async(self, url):
+        try:
+            cache_file = "/tmp/spotify_glass_cover.jpg"
+            if url.startswith("http://") or url.startswith("https://"):
+                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    with open(cache_file, "wb") as f:
+                        f.write(resp.read())
+            elif url.startswith("file://"):
+                cache_file = url[7:]
+
+            GLib.idle_add(self._apply_cover_pixbuf, cache_file)
+        except Exception:
+            pass
+
+    def _apply_cover_pixbuf(self, file_path):
+        try:
+            pix = GdkPixbuf.Pixbuf.new_from_file_at_scale(file_path, self.current_cover_size, self.current_cover_size, True)
+            self.cover_img.set_from_pixbuf(pix)
+        except Exception:
+            pass
+        return False
+
+    def _call_player(self, method_name):
+        if self.dbus_proxy:
+            self.dbus_proxy.call(method_name, None, Gio.DBusCallFlags.NONE, -1, None, None)
+
+    def _raise_spotify(self):
+        Gio.DBusProxy.new_for_bus(
+            Gio.BusType.SESSION,
+            Gio.DBusProxyFlags.NONE,
+            None,
+            "org.mpris.MediaPlayer2.spotify",
+            "/org/mpris/MediaPlayer2",
+            "org.mpris.MediaPlayer2",
+            None,
+            lambda s, res: Gio.DBusProxy.new_for_bus_finish(res).call("Raise", None, Gio.DBusCallFlags.NONE, -1, None, None)
+        )
+
+    def _start_ipc_server(self):
+        """Socket UNIX para responder a llamadas de unhide de instancias secundarias."""
+        def ipc_worker():
+            try:
+                if os.path.exists(SOCKET_PATH):
+                    try:
+                        os.unlink(SOCKET_PATH)
+                    except OSError:
+                        pass
+                server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                server.bind(SOCKET_PATH)
+                server.listen(5)
+                while True:
+                    conn, _ = server.accept()
+                    data = conn.recv(64)
+                    if b"CENTER" in data:
+                        GLib.idle_add(lambda: self._unhide(center=True))
+                        conn.sendall(b"OK")
+                    elif b"SHOW" in data:
+                        GLib.idle_add(lambda: self._unhide(center=False))
+                        conn.sendall(b"OK")
+                    elif b"TOGGLE" in data:
+                        GLib.idle_add(self.toggle_visibility)
+                        conn.sendall(b"OK")
+                    elif b"PILL" in data:
+                        GLib.idle_add(lambda: self.set_mode(MODE_PILL))
+                        conn.sendall(b"OK")
+                    elif b"CARD" in data:
+                        GLib.idle_add(lambda: self.set_mode(MODE_CARD))
+                        conn.sendall(b"OK")
+                    elif b"STATUS" in data:
+                        status_info = {
+                            "track": self.title_label.get_text(),
+                            "artist": self.artist_label.get_text(),
+                            "is_playing": self.is_playing,
+                            "pos_us": self.current_pos_us,
+                            "track_length_us": self.track_length_us,
+                            "is_scrubbing": self.is_scrubbing,
+                            "is_visible": self.win.is_visible(),
+                            "position": self.win.get_position(),
+                            "size": self.win.get_size(),
+                            "mode": self.mode,
+                        }
+                        conn.sendall(json.dumps(status_info).encode())
+                    elif b"SYNC" in data:
+                        GLib.idle_add(self._sync_player)
+                        conn.sendall(b"OK")
+                    conn.close()
+            except Exception:
+                pass
+
+        threading.Thread(target=ipc_worker, daemon=True).start()
+
+    def _unhide(self, center=False):
+        if center:
+            disp = Gdk.Display.get_default()
+            if disp:
+                mon = disp.get_primary_monitor() or disp.get_monitor(0)
+                if mon:
+                    geo = mon.get_geometry()
+                    w, h = self.win.get_size()
+                    self.win.move(geo.x + (geo.width - w) // 2, geo.y + 120)
+        self.win.deiconify()
+        self.win.show_all()
+        self.win.present_with_time(Gdk.CURRENT_TIME)
+        self.win.set_keep_above(True)
+        self.win.stick()
+        gdk_win = self.win.get_window()
+        if gdk_win:
+            gdk_win.raise_()
+        os.system('DISPLAY=:0 xprop -name "Spotify Liquid Glass" -f _NET_WM_STATE 32a -set _NET_WM_STATE _NET_WM_STATE_ABOVE,_NET_WM_STATE_STICKY 2>/dev/null &')
+        return False
+
+def main():
+    app = SpotifyGlassWidget()
+    Gtk.main()
+
+if __name__ == "__main__":
+    main()

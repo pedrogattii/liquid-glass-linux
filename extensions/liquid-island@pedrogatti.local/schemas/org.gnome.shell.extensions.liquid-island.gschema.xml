@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.liquid-island" path="/org/gnome/shell/extensions/liquid-island/">
+    <key name="manage-legacy-widget" type="b"><default>false</default><summary>Migrar el widget anterior tras activar la isla</summary></key>
+    <key name="legacy-was-enabled" type="b"><default>false</default><summary>Estado de inicio previo del widget</summary></key>
+    <key name="legacy-was-active" type="b"><default>false</default><summary>Estado de ejecución previo del widget</summary></key>
+    <key name="legacy-suspended" type="b"><default>false</default><summary>El widget anterior fue suspendido por la isla</summary></key>
+    <key name="appearance" type="s">
+      <choices><choice value="auto"/><choice value="light"/><choice value="dark"/></choices>
+      <default>'auto'</default>
+      <summary>Apariencia del cristal</summary>
+      <description>auto sigue el esquema de color del escritorio.</description>
+    </key>
+    <key name="blur-strength" type="d">
+      <range min="0.0" max="1.0"/>
+      <default>0.85</default>
+      <summary>Intensidad del desenfoque</summary>
+    </key>
+    <key name="desktop-style" type="b">
+      <default>true</default>
+      <summary>Aplicar el material al escritorio</summary>
+      <description>Distribuye la barra en grupos de cristal, añade el dock y armoniza los menús y actividades.</description>
+    </key>
+    <key name="toggle-island" type="as">
+      <default>['&lt;Super&gt;i']</default>
+      <summary>Atajo para desplegar la isla</summary>
+    </key>
+  </schema>
+</schemalist>

@@ -1,0 +1,73 @@
+# Perfil Dconf optimizado para el entorno Liquid Glass (Apple macOS Style)
+# Se aplica limpiamente sin sobreescribir tus aplicaciones favoritas ni el layout del app picker.
+
+[org/gnome/desktop/interface]
+color-scheme='prefer-dark'
+document-font-name='SF Pro Text 10.5'
+font-antialiasing='rgba'
+font-hinting='slight'
+font-name='SF Pro Text 11'
+gtk-theme='WhiteSur-Dark'
+show-battery-percentage=true
+toolkit-accessibility=false
+
+[org/gnome/desktop/wm/preferences]
+button-layout='appmenu:minimize,maximize,close'
+
+[org/gnome/shell]
+allow-extension-installation=true
+disable-extension-version-validation=true
+disable-user-extensions=false
+enabled-extensions=['touchpad-gesture-customization@coooolapps.com', 'clipboard-indicator@tudmotu.com', 'blur-my-shell@aunetx', 'appindicatorsupport@rgcjonas.gmail.com', 'liquid-island@pedrogatti.local']
+
+[org/gnome/shell/extensions/blur-my-shell]
+brightness=0.85
+pipelines={'pipeline_default': {'name': <'Default'>, 'effects': <[<{'type': <'dual_kawase_blur'>, 'id': <'effect_000000000000'>, 'params': <{'unscaled_radius': <35>, 'brightness': <0.85>}>}>]>}}
+settings-version=7
+sigma=35
+
+[org/gnome/shell/extensions/blur-my-shell/applications]
+blur=true
+brightness=0.90
+corner-radius=20
+dynamic-opacity=true
+enable-all=false
+opacity=220
+sigma=32
+whitelist=['spotify-glass-widget*', 'ptyxis*', 'org.gnome.Ptyxis*', 'nautilus*', 'org.gnome.Nautilus*', 'gnome-control-center*']
+
+[org/gnome/shell/extensions/blur-my-shell/dash-to-dock]
+brightness=0.85
+sigma=35
+
+[org/gnome/shell/extensions/blur-my-shell/panel]
+brightness=0.88
+customize=true
+override-background=true
+sigma=35
+static-blur=true
+style-panel=0
+
+[org/gnome/shell/extensions/blur-my-shell/popup]
+blur=true
+brightness=0.88
+corner-radius=22
+sigma=32
+
+[org/gnome/shell/extensions/liquid-island]
+appearance='auto'
+blur-strength=0.85
+desktop-style=true
+manage-legacy-widget=false
+toggle-island=['<Super>i']
+
+[org/gnome/shell/extensions/clipboard-indicator]
+cache-size=50
+history-size=50
+move-item-first=true
+next-history-clear=-1
+paste-on-select=true
+toggle-menu=['<Super>v']
+
+[org/gnome/shell/keybindings]
+toggle-message-tray=['<Super>m']

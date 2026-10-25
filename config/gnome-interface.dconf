@@ -1,0 +1,9 @@
+[/]
+color-scheme='prefer-dark'
+document-font-name='SF Pro Text 10.5'
+font-antialiasing='rgba'
+font-hinting='slight'
+font-name='SF Pro Text 11'
+gtk-theme='WhiteSur-Dark'
+show-battery-percentage=true
+toolkit-accessibility=false

@@ -1,0 +1,432 @@
+/* Blur is supplied by Shell effects; keep these surfaces translucent. */
+.liquid-island {
+  color: #f7f8fc;
+  font-size: 13px;
+}
+.liquid-surface {
+  background-color: rgba(18, 22, 32, 0.40);
+  background-gradient-direction: vertical;
+  background-gradient-start: rgba(255, 255, 255, 0.16);
+  background-gradient-end: rgba(10, 14, 22, 0.26);
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-top: 1.5px solid rgba(255, 255, 255, 0.65);
+  border-radius: 28px;
+  box-shadow: 0 16px 45px 0 rgba(0, 0, 0, 0.40);
+  padding: 18px;
+  spacing: 12px;
+}
+.liquid-compact {
+  border-radius: 24px;
+  padding: 8px 14px;
+  spacing: 10px;
+  min-height: 26px;
+}
+.liquid-expanded .liquid-surface { border-radius: 30px; }
+.liquid-title { font-weight: 700; font-size: 14px; color: #fafbff; }
+.liquid-subtitle { font-size: 12px; color: rgba(244, 246, 255, 0.70); }
+.liquid-section { font-size: 11px; font-weight: 700; color: rgba(244, 246, 255, 0.62); }
+.liquid-control {
+  color: #f6f8ff;
+  background-color: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 16px;
+  padding: 10px;
+  transition-duration: 200ms;
+}
+.liquid-control:hover, .liquid-control:focus {
+  background-color: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.30);
+}
+.liquid-control:active { background-color: rgba(255, 255, 255, 0.25); }
+.liquid-control:insensitive { color: rgba(245, 247, 255, 0.27); }
+.liquid-play {
+  background-color: #1ed760;
+  color: #000000;
+  border-radius: 22px;
+  padding: 13px;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  box-shadow: 0 4px 18px rgba(30, 215, 96, 0.55);
+  transition-duration: 150ms;
+}
+.liquid-play:hover, .liquid-play:focus {
+  background-color: #24e86c;
+  box-shadow: 0 6px 24px rgba(30, 215, 96, 0.80);
+}
+.liquid-play StIcon { color: #000000; }
+.liquid-spotify-tag {
+  color: #1ed760 !important;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 1px;
+}
+.liquid-cover-button {
+  padding: 0;
+  border-radius: 18px;
+  border: 1.5px solid rgba(255, 255, 255, 0.30);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  transition-duration: 150ms;
+}
+.liquid-cover-button:hover, .liquid-cover-button:focus {
+  border-color: rgba(30, 215, 96, 0.75);
+  box-shadow: 0 8px 26px rgba(30, 215, 96, 0.35);
+}
+.liquid-title-button {
+  padding: 0;
+  background-color: transparent;
+  border: none;
+}
+.liquid-title-button:hover .liquid-title, .liquid-title-button:focus .liquid-title {
+  color: #1ed760;
+}
+.liquid-artist {
+  font-size: 13px;
+  font-weight: 500;
+  color: rgba(245, 248, 255, 0.85);
+}
+.liquid-album {
+  font-size: 11px;
+  color: rgba(245, 248, 255, 0.52);
+}
+.liquid-spotify-btn {
+  background-color: rgba(30, 215, 96, 0.12);
+  color: #1ed760;
+  border: 1px solid rgba(30, 215, 96, 0.28);
+}
+.liquid-spotify-btn:hover, .liquid-spotify-btn:focus {
+  background-color: rgba(30, 215, 96, 0.25);
+  color: #ffffff;
+  box-shadow: 0 2px 12px rgba(30, 215, 96, 0.40);
+}
+.liquid-spotify-btn StIcon { color: #1ed760; }
+.liquid-spotify-btn:hover StIcon { color: #ffffff; }
+.liquid-playing .liquid-compact-button {
+  border-color: rgba(30, 215, 96, 0.42);
+  box-shadow: 0 2px 14px rgba(30, 215, 96, 0.22);
+}
+.liquid-cover { border-radius: 14px; background-color: rgba(255, 255, 255, 0.10); }
+.liquid-tab {
+  border-radius: 14px;
+  padding: 8px 12px;
+  color: rgba(245, 247, 255, 0.66);
+  background-color: transparent;
+}
+.liquid-tab:hover, .liquid-tab:focus { background-color: rgba(255, 255, 255, 0.10); }
+.liquid-active { background-color: rgba(255, 255, 255, 0.15); color: #ffffff; }
+
+/* All-in-one Dynamic Island styles */
+.liquid-aio-action-btn {
+  border-radius: 12px;
+  padding: 6px 10px;
+  background-color: rgba(255, 255, 255, 0.08);
+  color: rgba(245, 247, 255, 0.80);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  transition-duration: 150ms;
+}
+.liquid-aio-action-btn:hover, .liquid-aio-action-btn:focus {
+  background-color: rgba(255, 255, 255, 0.20);
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.25);
+}
+.liquid-light .liquid-aio-action-btn {
+  background-color: rgba(45, 65, 95, 0.08);
+  color: #202b3d;
+  border-color: rgba(45, 65, 95, 0.12);
+}
+.liquid-light .liquid-aio-action-btn:hover, .liquid-light .liquid-aio-action-btn:focus {
+  background-color: rgba(45, 65, 95, 0.16);
+  color: #101620;
+}
+.liquid-divider {
+  height: 1px;
+  background-color: rgba(255, 255, 255, 0.10);
+  margin: 3px 0;
+}
+.liquid-light .liquid-divider {
+  background-color: rgba(40, 60, 90, 0.10);
+}
+.liquid-preview-glow .liquid-surface {
+  box-shadow: 0 0 25px 2px rgba(120, 180, 255, 0.35), 0 16px 45px 0 rgba(0, 0, 0, 0.45);
+  border-color: rgba(255, 255, 255, 0.45);
+}
+.liquid-light .liquid-preview-glow .liquid-surface {
+  box-shadow: 0 0 25px 2px rgba(80, 140, 230, 0.30), 0 16px 45px 0 rgba(30, 44, 68, 0.20);
+  border-color: rgba(80, 140, 230, 0.50);
+}
+.liquid-empty-icon {
+  color: #1ed760;
+  margin-bottom: 2px;
+}
+.liquid-light .liquid-empty-icon {
+  color: #18ab4c;
+}
+.liquid-notification-card {
+  padding: 0;
+  background-color: transparent;
+  border: none;
+  border-radius: 18px;
+  text-align: left;
+}
+.liquid-notification-card:hover .liquid-notification,
+.liquid-notification-card:focus .liquid-notification {
+  background-color: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.22);
+}
+.liquid-notification {
+  border-radius: 18px;
+  padding: 12px;
+  spacing: 8px;
+  background-color: rgba(255, 255, 255, 0.065);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  transition-duration: 150ms;
+}
+.liquid-notif-icon { margin-top: 2px; }
+.liquid-meter {
+  height: 5px;
+  -barlevel-height: 4px;
+  -barlevel-background-color: rgba(255, 255, 255, 0.16);
+  -barlevel-active-background-color: #dbe7ff;
+  -barlevel-overdrive-color: #edb99e;
+  -barlevel-overdrive-separator-width: 0;
+}
+.liquid-empty { padding: 18px 8px; color: rgba(245, 247, 255, 0.56); }
+.liquid-badge { padding: 3px 7px; border-radius: 10px; background-color: rgba(168, 198, 255, 0.18); color: #d4e3ff; font-size: 11px; }
+.liquid-wave { color: #b7f4d0; }
+.liquid-playing .liquid-wave { color: #b7f4d0; }
+
+.liquid-light { color: #202735; }
+.liquid-light .liquid-surface {
+  background-color: rgba(255, 255, 255, 0.42);
+  background-gradient-direction: vertical;
+  background-gradient-start: rgba(255, 255, 255, 0.75);
+  background-gradient-end: rgba(225, 236, 252, 0.30);
+  border: 1px solid rgba(255, 255, 255, 0.80);
+  border-top: 1.5px solid rgba(255, 255, 255, 0.98);
+  box-shadow: 0 16px 45px 0 rgba(30, 44, 68, 0.16);
+}
+.liquid-light .liquid-title { color: #202735; }
+.liquid-light .liquid-subtitle, .liquid-light .liquid-section { color: rgba(32, 39, 53, 0.65); }
+.liquid-light .liquid-control { background-color: rgba(45, 61, 86, 0.065); border-color: rgba(45, 61, 86, 0.06); color: #202735; }
+.liquid-light .liquid-control:hover, .liquid-light .liquid-control:focus { background-color: rgba(45, 61, 86, 0.13); border-color: rgba(45, 61, 86, 0.22); }
+.liquid-light .liquid-control:insensitive { color: rgba(32, 39, 53, 0.28); }
+.liquid-light .liquid-play {
+  background-color: #1ed760;
+  color: #000000;
+  border: 1px solid rgba(255, 255, 255, 0.80);
+  box-shadow: 0 4px 18px rgba(30, 215, 96, 0.45);
+}
+.liquid-light .liquid-play:hover, .liquid-light .liquid-play:focus {
+  background-color: #24e86c;
+  box-shadow: 0 6px 24px rgba(30, 215, 96, 0.70);
+}
+.liquid-light .liquid-play StIcon { color: #000000; }
+.liquid-light .liquid-cover { background-color: rgba(45, 61, 86, 0.08); }
+.liquid-light .liquid-tab { color: rgba(32, 39, 53, 0.65); }
+.liquid-light .liquid-tab:hover, .liquid-light .liquid-tab:focus, .liquid-light .liquid-active { background-color: rgba(45, 61, 86, 0.10); color: #202735; }
+.liquid-light .liquid-notification-card:hover .liquid-notification,
+.liquid-light .liquid-notification-card:focus .liquid-notification {
+  background-color: rgba(255, 255, 255, 0.55);
+  border-color: rgba(45, 61, 86, 0.16);
+}
+.liquid-light .liquid-notification { background-color: rgba(255, 255, 255, 0.38); border-color: rgba(45, 61, 86, 0.08); }
+.liquid-light .liquid-meter { -barlevel-background-color: rgba(45, 61, 86, 0.14); -barlevel-active-background-color: #435f89; }
+.liquid-light .liquid-empty { color: rgba(32, 39, 53, 0.60); }
+.liquid-light .liquid-badge { background-color: rgba(55, 97, 160, 0.10); color: #345b91; }
+.liquid-light .liquid-wave, .liquid-light.liquid-playing .liquid-wave { color: #27825b; }
+.liquid-no-blur.liquid-dark .liquid-surface { background-gradient-start: rgba(40, 45, 57, 0.96); background-gradient-end: rgba(22, 25, 34, 0.96); }
+.liquid-no-blur.liquid-light .liquid-surface { background-gradient-start: rgba(255, 255, 255, 0.97); background-gradient-end: rgba(231, 239, 252, 0.97); }
+
+/* Only material and curvature: preserve the base theme's geometry. */
+.liquid-desktop.liquid-dark #panel { background-color: transparent; color: #fafbff; }
+.liquid-desktop.liquid-light #panel { background-color: transparent; color: #202735; }
+.liquid-desktop .popup-menu-content, .liquid-desktop .quick-settings,
+.liquid-desktop .calendar, .liquid-desktop .datemenu-popover { border-radius: 24px; }
+.liquid-desktop.liquid-dark .popup-menu-content,
+.liquid-desktop.liquid-dark .quick-settings {
+  background-color: rgba(18, 22, 32, 0.46) !important;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-top: 1.5px solid rgba(255, 255, 255, 0.55);
+  color: #f7f8fc;
+  box-shadow: 0 16px 45px 0 rgba(0, 0, 0, 0.40);
+}
+.liquid-desktop.liquid-light .popup-menu-content,
+.liquid-desktop.liquid-light .quick-settings {
+  background-color: rgba(250, 252, 255, 0.52) !important;
+  border: 1px solid rgba(255, 255, 255, 0.78);
+  border-top: 1.5px solid rgba(255, 255, 255, 0.98);
+  color: #202735;
+  box-shadow: 0 16px 45px 0 rgba(30, 44, 68, 0.16);
+}
+/* Hide native GNOME dash so only the Liquid Glass dock exists */
+.liquid-desktop #dash,
+.liquid-desktop .dash,
+.liquid-desktop #dash .dash-background,
+.liquid-desktop #dash .dash-item-container {
+  opacity: 0 !important;
+  height: 0 !important;
+  min-height: 0 !important;
+  max-height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+/* v2: the center island is part of the panel; three separated control groups. */
+.liquid-desktop.liquid-dark #panel,
+.liquid-desktop.liquid-light #panel,
+.liquid-desktop.liquid-dark #panel:overview,
+.liquid-desktop.liquid-light #panel:overview {
+  height: 50px !important;
+  background-color: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+.liquid-desktop #panelLeft,
+.liquid-desktop #panelCenter,
+.liquid-desktop #panelRight,
+.liquid-desktop #panel:overview #panelCenter {
+  margin: 7px 12px !important;
+  padding: 0 7px;
+  spacing: 2px;
+  border-radius: 19px;
+  background-gradient-direction: vertical;
+  box-shadow: 0 4px 18px 0 rgba(0, 0, 0, 0.22);
+}
+.liquid-desktop.liquid-dark #panelLeft, .liquid-desktop.liquid-dark #panelCenter, .liquid-desktop.liquid-dark #panelRight {
+  background-color: rgba(18, 22, 32, 0.40);
+  background-gradient-start: rgba(255, 255, 255, 0.16);
+  background-gradient-end: rgba(10, 14, 22, 0.26);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-top: 1.5px solid rgba(255, 255, 255, 0.60);
+  color: #f5f7ff;
+}
+.liquid-desktop.liquid-light #panelLeft, .liquid-desktop.liquid-light #panelCenter, .liquid-desktop.liquid-light #panelRight {
+  background-color: rgba(255, 255, 255, 0.46);
+  background-gradient-start: rgba(255, 255, 255, 0.75);
+  background-gradient-end: rgba(220, 235, 250, 0.32);
+  border: 1px solid rgba(255, 255, 255, 0.78);
+  border-top: 1.5px solid rgba(255, 255, 255, 0.98);
+  color: #202b3d;
+}
+.liquid-desktop #panel .panel-button { border-radius: 14px; padding: 0 6px; }
+.liquid-desktop #panel .panel-button:hover, .liquid-desktop #panel .panel-button:active { background-color: rgba(150, 170, 210, 0.20); }
+.liquid-desktop #panelCenter .clock { font-size: 12px; font-weight: 600; }
+.liquid-panel-media .liquid-title { font-size: 12px; font-weight: 600; }
+.liquid-panel-media .liquid-compact-button { padding: 0 2px 0 9px; }
+.liquid-panel-media .liquid-wave { font-size: 11px; min-width: 15px; }
+.liquid-panel-launcher { padding: 0 5px; }
+.liquid-panel-context { font-size: 12px; font-weight: 600; max-width: 115px; }
+.liquid-desktop.liquid-light #panel .liquid-title { color: #202b3d; }
+.liquid-desktop .popup-menu-content { padding: 14px; }
+.liquid-desktop .quick-settings { padding: 20px; spacing: 14px; }
+.liquid-desktop .quick-toggle { border-radius: 18px; }
+.liquid-desktop .message, .liquid-desktop .calendar, .liquid-desktop .events-button,
+.liquid-desktop .world-clocks-button, .liquid-desktop .weather-button { border-radius: 18px; }
+.liquid-desktop.liquid-dark .message, .liquid-desktop.liquid-dark .calendar,
+.liquid-desktop.liquid-dark .events-button, .liquid-desktop.liquid-dark .world-clocks-button,
+.liquid-desktop.liquid-dark .weather-button {
+  background-color: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-top: 1px solid rgba(255, 255, 255, 0.22);
+}
+.liquid-desktop.liquid-light .message, .liquid-desktop.liquid-light .calendar,
+.liquid-desktop.liquid-light .events-button, .liquid-desktop.liquid-light .world-clocks-button,
+.liquid-desktop.liquid-light .weather-button {
+  background-color: rgba(255, 255, 255, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.70);
+  border-top: 1px solid rgba(255, 255, 255, 0.90);
+}
+.liquid-desktop .search-entry { border-radius: 24px; padding: 12px 20px; }
+.liquid-desktop.liquid-dark .search-entry {
+  background-color: rgba(255, 255, 255, 0.12);
+  color: #f7f8fc;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-top: 1.5px solid rgba(255, 255, 255, 0.40);
+}
+.liquid-desktop.liquid-light .search-entry {
+  background-color: rgba(255, 255, 255, 0.65);
+  color: #202b3d;
+  border: 1px solid rgba(255, 255, 255, 0.85);
+}
+.liquid-dock-surface {
+  spacing: 6px; padding: 10px 14px 7px; border-radius: 26px;
+  background-gradient-direction: vertical;
+  background-color: rgba(18, 22, 32, 0.40);
+  background-gradient-start: rgba(255, 255, 255, 0.18);
+  background-gradient-end: rgba(10, 14, 22, 0.26);
+  border: 1px solid rgba(255, 255, 255, 0.26);
+  border-top: 1.5px solid rgba(255, 255, 255, 0.65);
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.40);
+}
+.liquid-light .liquid-dock-surface {
+  background-color: rgba(255, 255, 255, 0.45);
+  background-gradient-start: rgba(255, 255, 255, 0.78);
+  background-gradient-end: rgba(220, 235, 250, 0.32);
+  border: 1px solid rgba(255, 255, 255, 0.80);
+  border-top: 1.5px solid rgba(255, 255, 255, 0.98);
+  box-shadow: 0 16px 42px rgba(30, 50, 80, 0.16);
+}
+.liquid-dock-button { padding: 5px; border-radius: 16px; transition-duration: 180ms; }
+.liquid-dock-button:hover, .liquid-dock-button:focus { background-color: rgba(170, 195, 240, 0.25); }
+.liquid-dock-focused { background-color: rgba(170, 195, 240, 0.18); }
+.liquid-dock-dot { width: 4px; height: 3px; border-radius: 2px; background-color: transparent; }
+.liquid-dock-running { background-color: #1ed760; box-shadow: 0 0 6px rgba(30, 215, 96, 0.8); }
+.liquid-light .liquid-dock-running { background-color: #1ed760; box-shadow: 0 0 6px rgba(30, 215, 96, 0.6); }
+.liquid-dock-grid { color: #eff5ff; }
+.liquid-light .liquid-dock-grid { color: #354e72; }
+
+/* Explicit palette also wins over Blur My Shell's important surface rules. */
+.liquid-desktop.liquid-light #panel .panel-button,
+.liquid-desktop.liquid-light #panel StLabel,
+.liquid-desktop.liquid-light #panel StIcon { color: #202b3d !important; }
+.liquid-desktop.liquid-light #panel .workspace-dot { background-color: #344e70; }
+.liquid-desktop.liquid-light .quick-settings,
+.liquid-desktop.liquid-light .popup-menu-content,
+.liquid-desktop.liquid-light .datemenu-popover {
+  background-color: rgba(250, 252, 255, 0.52) !important;
+  border: 1px solid rgba(255, 255, 255, 0.78) !important;
+  border-top: 1.5px solid rgba(255, 255, 255, 0.98) !important;
+  color: #202b3d !important;
+  box-shadow: 0 16px 45px 0 rgba(30, 44, 68, 0.16) !important;
+}
+.liquid-desktop.liquid-dark .quick-settings,
+.liquid-desktop.liquid-dark .popup-menu-content,
+.liquid-desktop.liquid-dark .datemenu-popover {
+  background-color: rgba(18, 22, 32, 0.46) !important;
+  border: 1px solid rgba(255, 255, 255, 0.22) !important;
+  border-top: 1.5px solid rgba(255, 255, 255, 0.55) !important;
+  color: #f7f9ff !important;
+  box-shadow: 0 16px 45px 0 rgba(0, 0, 0, 0.40) !important;
+}
+.liquid-desktop.liquid-light .quick-settings .quick-toggle,
+.liquid-desktop.liquid-light .quick-settings .icon-button {
+  background-color: rgba(40, 62, 94, 0.08);
+  border: 1px solid rgba(40, 62, 94, 0.12);
+  color: #243650;
+}
+.liquid-desktop.liquid-light .quick-settings StLabel,
+.liquid-desktop.liquid-light .quick-settings StIcon,
+.liquid-desktop.liquid-light .popup-menu-item,
+.liquid-desktop.liquid-light .datemenu-popover StLabel { color: #243650 !important; }
+.liquid-desktop.liquid-light .quick-settings .quick-toggle:checked {
+  background-color: #1ed760;
+  color: #000000;
+  box-shadow: 0 2px 10px rgba(30, 215, 96, 0.35);
+}
+.liquid-desktop.liquid-light .quick-settings .quick-toggle:checked StLabel,
+.liquid-desktop.liquid-light .quick-settings .quick-toggle:checked StIcon,
+.liquid-desktop.liquid-light .quick-settings .quick-toggle-arrow StIcon { color: #000000 !important; }
+.liquid-desktop.liquid-dark .quick-settings .quick-toggle,
+.liquid-desktop.liquid-dark .quick-settings .icon-button {
+  background-color: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: #f7f9ff;
+}
+.liquid-desktop.liquid-dark .quick-settings .quick-toggle:checked {
+  background-color: #1ed760;
+  color: #000000;
+  box-shadow: 0 2px 10px rgba(30, 215, 96, 0.45);
+}
+.liquid-desktop.liquid-dark .quick-settings .quick-toggle:checked StLabel,
+.liquid-desktop.liquid-dark .quick-settings .quick-toggle:checked StIcon,
+.liquid-desktop.liquid-dark .quick-settings .quick-toggle-arrow StIcon { color: #000000 !important; }
+.liquid-desktop.liquid-light .datemenu-popover .calendar-today { color: #ffffff !important; }
+.liquid-desktop.liquid-light .datemenu-popover .calendar-other-month-day { color: rgba(36, 54, 80, 0.45) !important; }

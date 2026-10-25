@@ -1,0 +1,70 @@
+[/]
+allow-extension-installation=true
+app-picker-layout=[{'org.gnome.Contacts.desktop': <{'position': <0>}>, 'org.fedoraproject.MediaWriter.desktop': <{'position': <1>}>, 'org.gnome.Weather.desktop': <{'position': <2>}>, 'org.gnome.clocks.desktop': <{'position': <3>}>, 'org.gnome.Maps.desktop': <{'position': <4>}>, 'org.gnome.SimpleScan.desktop': <{'position': <5>}>, 'libreoffice-calc.desktop': <{'position': <6>}>, 'org.gnome.Settings.desktop': <{'position': <7>}>, 'org.gnome.Boxes.desktop': <{'position': <8>}>, 'org.gnome.Showtime.desktop': <{'position': <9>}>, 'org.gnome.Snapshot.desktop': <{'position': <10>}>, 'org.gnome.Characters.desktop': <{'position': <11>}>, 'Utilities': <{'position': <12>}>, 'System': <{'position': <13>}>, 'libreoffice-impress.desktop': <{'position': <14>}>, 'org.gnome.Tour.desktop': <{'position': <15>}>, 'org.gnome.Yelp.desktop': <{'position': <16>}>, 'libreoffice-writer.desktop': <{'position': <17>}>, 'antigravity-ide.desktop': <{'position': <18>}>, 'org.gnome.Calendar.desktop': <{'position': <19>}>, 'org.gnome.TextEditor.desktop': <{'position': <20>}>, 'org.gnome.Calculator.desktop': <{'position': <21>}>, 'com.mattjakeman.ExtensionManager.desktop': <{'position': <22>}>, 'java-25-openjdk-jconsole.desktop': <{'position': <23>}>}, {'rstudio.desktop': <{'position': <0>}>, 'mysql-workbench-community_mysql-workbench-community.desktop': <{'position': <1>}>, 'org.gnome.FileRoller.desktop': <{'position': <2>}>, 'io.github.peazip.PeaZip.desktop': <{'position': <3>}>, 'nvidia-settings.desktop': <{'position': <4>}>, 'victus-control.desktop': <{'position': <5>}>}]
+disable-extension-version-validation=true
+disable-user-extensions=false
+disabled-extensions=['apps-menu@gnome-shell-extensions.gcampax.github.com', 'background-logo@fedorahosted.org', 'launch-new-instance@gnome-shell-extensions.gcampax.github.com', 'dash-to-panel@jderose9.github.com']
+enabled-extensions=['touchpad-gesture-customization@coooolapps.com', 'clipboard-indicator@tudmotu.com', 'blur-my-shell@aunetx', 'appindicatorsupport@rgcjonas.gmail.com', 'liquid-island@pedrogatti.local']
+favorite-apps=['brave-browser.desktop', 'org.gnome.Nautilus.desktop', 'discord.desktop', 'com.spotify.Client.desktop', 'org.gnome.Software.desktop', 'org.gnome.Ptyxis.desktop']
+last-selected-power-profile='power-saver'
+welcome-dialog-last-shown-version='50.0'
+
+[extensions/blur-my-shell]
+brightness=0.84999999999999998
+pipelines={'pipeline_default': {'name': <'Default'>, 'effects': <[<{'type': <'dual_kawase_blur'>, 'id': <'effect_000000000000'>, 'params': <{'unscaled_radius': <35>, 'brightness': <0.84999999999999998>}>}>]>}}
+settings-version=7
+sigma=35
+
+[extensions/blur-my-shell/applications]
+blur=true
+brightness=0.90000000000000002
+corner-radius=20
+dynamic-opacity=true
+enable-all=false
+opacity=220
+sigma=32
+whitelist=['spotify-glass-widget*', 'ptyxis*', 'org.gnome.Ptyxis*', 'nautilus*', 'org.gnome.Nautilus*', 'gnome-control-center*']
+
+[extensions/blur-my-shell/dash-to-dock]
+brightness=0.84999999999999998
+sigma=35
+
+[extensions/blur-my-shell/panel]
+brightness=0.88
+customize=true
+override-background=true
+sigma=35
+static-blur=true
+style-panel=0
+
+[extensions/blur-my-shell/popup]
+blur=true
+brightness=0.88
+corner-radius=22
+sigma=32
+
+[extensions/clipboard-indicator]
+cache-size=50
+history-size=50
+move-item-first=true
+next-history-clear=-1
+paste-on-select=true
+toggle-menu=['<Super>v']
+
+[extensions/dash-to-panel]
+extension-version=73
+panel-anchors='{}'
+panel-element-positions='{}'
+panel-lengths='{}'
+panel-positions='{}'
+panel-sizes='{}'
+prefs-opened=false
+
+[keybindings]
+toggle-message-tray=['<Super>m']
+
+[window-switcher]
+current-workspace-only=true
+
+[world-clocks]
+locations=@av []
