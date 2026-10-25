@@ -11,6 +11,7 @@ import {Slider} from 'resource:///org/gnome/shell/ui/slider.js';
 import {Lifetime} from './lifecycle.js';
 import {plainText} from './policy.js';
 import {Backdrop} from './backdrop.js';
+import {isMessagingSource} from './messagingPolicy.js';
 
 function label(text = '', style = 'liquid-subtitle') {
     const actor = new St.Label({
@@ -137,6 +138,11 @@ export class Island {
                 this.syncModuleOrder();
             if (key === 'clock-show-seconds')
                 this.wallClock.force_seconds = this.getSettingBool('clock-show-seconds', false);
+            if (key === 'messaging-bubbles' || key === 'messaging-apps') {
+                this.renderHistory();
+                if (this.current)
+                    this.renderPreview();
+            }
             if (key === 'calendar-week-start')
                 this.renderCalendarGrid();
             if (key === 'pinned-island-apps' || key === 'show-quick-controls')
@@ -1277,6 +1283,8 @@ export class Island {
     }
 
     updateMusic() {
+        if (this.destroying || !this.life.alive)
+            return;
         const state = this.music?.state;
         if (!state)
             return;
@@ -1559,6 +1567,10 @@ export class Island {
             x_expand: true,
         });
 
+        if (this.getSettingBool('messaging-bubbles', true) &&
+            isMessagingSource(n.source.app?.get_id?.(), n.source.title,
+                this.getSettingStrv('messaging-apps', [])))
+            card.add_style_class_name('liquid-message-bubble');
         const heading = new St.BoxLayout({style: 'spacing: 8px;', x_expand: true, y_align: Clutter.ActorAlign.CENTER});
         const sourceIcon = n.source.icon ?
             new St.Icon({gicon: n.source.icon, icon_size: 16, style_class: 'liquid-notif-icon'}) :
@@ -1710,6 +1722,8 @@ export class Island {
     }
 
     destroy() {
+        if (this.destroying)
+            return;
         this.destroying = true;
         this.cancelPopupAnimation();
         this.backdrop.setVisible(false);

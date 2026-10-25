@@ -1,7 +1,9 @@
 import Adw from 'gi://Adw';
 import Gio from 'gi://Gio';
+import GioUnix from 'gi://GioUnix';
 import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk';
+import {addDesktopPreferences} from './lib/preferencesWidgets.js';
 import {ExtensionPreferences} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
 /**
@@ -184,7 +186,7 @@ function createAppListManager({
             currentApps.forEach((appId, index) => {
                 let appInfo = null;
                 try {
-                    appInfo = Gio.DesktopAppInfo.new(appId);
+                    appInfo = GioUnix.DesktopAppInfo.new(appId);
                 } catch {
                     // Fallback to installed list
                 }
@@ -463,7 +465,7 @@ export default class LiquidIslandPreferences extends ExtensionPreferences {
 
         const shortcutHintRow = new Adw.ActionRow({
             title: 'Formato del atajo',
-            subtitle: 'Ejemplo: <Super>i. Dejá el campo vacío para desactivarlo. Presioná el botón de aplicar.',
+            subtitle: 'Ejemplo: &lt;Super&gt;i. Dejá el campo vacío para desactivarlo. Presioná el botón de aplicar.',
         });
         groupBehavior.add(shortcutHintRow);
 
@@ -884,5 +886,11 @@ export default class LiquidIslandPreferences extends ExtensionPreferences {
             window,
         });
         pageHardware.add(islandAppsManagerGroup);
+        const advanced = addDesktopPreferences(window, settings, text => this.gettext(text),
+            [pageIsland, pageDock, pageCalendar, pageAesthetics, pageHardware]);
+        advanced.integrations.add(createAppListManager({settings, key: 'messaging-apps',
+            title: 'Aplicaciones con Burbujas', description: 'Notificaciones de estas aplicaciones con estilo de cristal',
+            addTitle: 'Agregar aplicación de mensajería', addSubtitle: 'Seleccioná una aplicación instalada',
+            addBtnLabel: 'Agregar', window}));
     }
 }

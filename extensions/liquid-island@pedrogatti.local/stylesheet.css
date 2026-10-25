@@ -883,3 +883,12 @@
 .liquid-light .liquid-dock-menu-item:hover, .liquid-light .liquid-dock-menu-item:focus {
   background-color: rgba(45, 65, 95, 0.12);
 }
+
+/* Messaging bubbles use the native notification source, policies and actions. */
+.liquid-message-bubble {
+  border-radius: 20px 20px 20px 8px;
+  border: 1px solid rgba(140, 190, 255, 0.32);
+  border-left-width: 3px;
+  background-color: rgba(140, 190, 255, 0.08);
+  padding: 10px;
+}

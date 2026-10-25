@@ -203,5 +203,7 @@
       <default>['&lt;Super&gt;&lt;Shift&gt;w']</default>
       <summary>Toggle desktop widget editing</summary>
     </key>
+    <key name="messaging-bubbles" type="b"><default>true</default><summary>Style messaging notifications as native glass bubbles</summary></key>
+    <key name="messaging-apps" type="as"><default>['discord.desktop', 'com.discordapp.Discord.desktop', 'org.telegram.desktop.desktop', 'org.signal.Signal.desktop', 'whatsapp.desktop']</default><summary>Messaging desktop IDs receiving glass notification bubbles</summary></key>
   </schema>
 </schemalist>

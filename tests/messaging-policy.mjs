@@ -1,0 +1,10 @@
+import assert from 'node:assert/strict';
+import {isMessagingSource} from '../extensions/liquid-island@pedrogatti.local/lib/messagingPolicy.js';
+const apps=['discord.desktop','com.discordapp.Discord.desktop','org.signal.Signal.desktop'];
+assert.equal(isMessagingSource('com.discordapp.Discord.desktop','Other',apps),true);
+assert.equal(isMessagingSource(null,'Discord',apps),true);
+assert.equal(isMessagingSource(null,'Signal',apps),true);
+assert.equal(isMessagingSource('org.gnome.Ptyxis.desktop','Terminal',apps),false);
+assert.equal(isMessagingSource(null,'Discord malicious suffix',apps),false);
+assert.equal(isMessagingSource(null,'Discord',[]),false);
+console.log('messaging policy: desktop IDs, exact source names and disabled sources passed');

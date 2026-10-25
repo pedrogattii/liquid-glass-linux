@@ -1,8 +1,10 @@
 {
   "uuid": "liquid-island@pedrogatti.local",
   "name": "Liquid Island",
-  "description": "Escritorio Liquid Glass con isla integrada en la barra, dock y superficies adaptables.",
-  "shell-version": ["50"],
+  "description": "Escritorio Liquid Glass para GNOME 50 con isla, dock y widgets nativos. Música por MPRIS; calendario y métricas locales; clima y carátulas consultan servicios de red.",
+  "shell-version": [
+    "50"
+  ],
   "settings-schema": "org.gnome.shell.extensions.liquid-island",
   "url": "https://github.com/pedrogattii/liquid-glass-linux"
 }

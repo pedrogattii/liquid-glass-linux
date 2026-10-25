@@ -1,6 +1,7 @@
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import {Lifetime} from './lifecycle.js';
+import {GpuTelemetry} from './gpuTelemetry.js';
 
 const THERMAL_PATHS = [
     '/sys/class/thermal/thermal_zone0/temp',
@@ -13,7 +14,8 @@ export class Telemetry {
         this.onChange = onChange;
         this.life = new Lifetime();
         this.cancellable = new Gio.Cancellable();
-        this.state = {cpu: 0, ram: 0, temp: null};
+        this.gpu = new GpuTelemetry();
+        this.state = {cpu: 0, ram: 0, temp: null, gpu: this.gpu.state};
         this._prevTotal = 0;
         this._prevIdle = 0;
         this._sampling = false;
@@ -24,6 +26,30 @@ export class Telemetry {
             this.sample();
             return GLib.SOURCE_CONTINUE;
         });
+    }
+
+    setGpuEnabled(enabled) {
+        if (!this.life.alive || Boolean(enabled) === this.gpu.enabled)
+            return;
+        this.gpu.setEnabled(enabled);
+        this.state.gpu = this.gpu.state;
+        this.onChange?.(this.state);
+        if (this.gpu.enabled)
+            this.sampleGpu();
+    }
+
+    async sampleGpu() {
+        const generation = this.gpu.generation;
+        try {
+            const snapshot = await this.gpu.sample();
+            if (this.life.alive && generation === this.gpu.generation) {
+                this.state.gpu = snapshot;
+                this.onChange?.(this.state);
+            }
+        } catch (error) {
+            if (this.life.alive)
+                console.debug(`Liquid Island GPU telemetry: ${error.message}`);
+        }
     }
 
     _loadFileAsync(path) {
@@ -52,6 +78,8 @@ export class Telemetry {
         if (!this.life.alive || this.cancellable.is_cancelled() || this._sampling)
             return;
         this._sampling = true;
+        if (this.gpu.enabled)
+            this.sampleGpu();
 
         try {
             const [statText, memText] = await Promise.all([
@@ -126,6 +154,7 @@ export class Telemetry {
     }
 
     destroy() {
+        this.gpu.destroy();
         this.cancellable.cancel();
         this.life.destroy();
         this.onChange = null;

@@ -4,228 +4,413 @@ import Soup from 'gi://Soup?version=3.0';
 import GdkPixbuf from 'gi://GdkPixbuf';
 import Shell from 'gi://Shell';
 import {Lifetime} from './lifecycle.js';
-import {choosePlayer, positionAt, coverUriAllowed, extractDominantColor} from './policy.js';
+import {positionAt, extractDominantColor} from './policy.js';
+import {MPRIS_PREFIX, DEFAULT_ACCENT, MAX_COVER_BYTES, desktopId, sameDesktopApp, nativeMusicApp,
+    playerPresent, orderPlayers, selectPlayerName, mediaMetadata, mediaCapabilities,
+    artworkUriAllowed, localArtworkAllowed} from './musicPolicy.js';
 
 const PATH = '/org/mpris/MediaPlayer2';
-const IFACE = 'org.mpris.MediaPlayer2.Player';
+const ROOT = 'org.mpris.MediaPlayer2';
+const IFACE = `${ROOT}.Player`;
 const NOW = () => GLib.get_monotonic_time();
+const FLAGS = Gio.DBusCallFlags.NO_AUTO_START;
 Gio._promisify(Soup.Session.prototype, 'send_async', 'send_finish');
 Gio._promisify(Gio.InputStream.prototype, 'read_bytes_async', 'read_bytes_finish');
 Gio._promisify(Gio.File.prototype, 'read_async', 'read_finish');
+Gio._promisify(Gio.File.prototype, 'query_info_async', 'query_info_finish');
 Gio._promisify(GdkPixbuf.Pixbuf, 'new_from_stream_at_scale_async', 'new_from_stream_finish');
 
-function listBusNames(cancellable) {
+function busCall(name, path, iface, method, args, reply, cancellable) {
     return new Promise((resolve, reject) => {
-        Gio.DBus.session.call('org.freedesktop.DBus', '/org/freedesktop/DBus',
-            'org.freedesktop.DBus', 'ListNames', null, new GLib.VariantType('(as)'),
-            Gio.DBusCallFlags.NONE, 2500, cancellable, (bus, result) => {
-                try {
-                    const [names] = bus.call_finish(result).deep_unpack();
-                    resolve(names);
-                } catch (error) {
-                    reject(error);
-                }
+        Gio.DBus.session.call(name, path, iface, method, args, reply, FLAGS,
+            2500, cancellable, (bus, result) => {
+                try { resolve(bus.call_finish(result)); } catch (error) { reject(error); }
             });
     });
 }
 
-function getPlaybackStatus(busName, cancellable) {
-    return new Promise(resolve => {
-        Gio.DBus.session.call(busName, PATH, 'org.freedesktop.DBus.Properties',
-            'Get', new GLib.Variant('(ss)', [IFACE, 'PlaybackStatus']),
-            new GLib.VariantType('(v)'), Gio.DBusCallFlags.NONE, 1000,
-            cancellable, (bus, result) => {
-                try {
-                    const reply = bus.call_finish(result);
-                    const status = reply.get_child_value(0).get_variant().deep_unpack();
-                    resolve(status);
-                } catch (_) {
-                    resolve(null);
-                }
+function newProxy(owner, iface, cancellable) {
+    return new Promise((resolve, reject) => {
+        Gio.DBusProxy.new_for_bus(Gio.BusType.SESSION,
+            Gio.DBusProxyFlags.DO_NOT_AUTO_START | Gio.DBusProxyFlags.GET_INVALIDATED_PROPERTIES,
+            null, owner, PATH, iface, cancellable, (_source, result) => {
+                try { resolve(Gio.DBusProxy.new_for_bus_finish(result)); }
+                catch (error) { reject(error); }
             });
     });
+}
+
+function property(proxy, key, fallback) {
+    return proxy?.get_cached_property(key)?.deep_unpack() ?? fallback;
 }
 
 export class Music {
-    constructor(changed) {
+    constructor(changed = null) {
         this.life = new Lifetime();
         this.changed = changed;
+        this.listeners = new Set();
         this.cancel = new Gio.Cancellable();
+        this.records = new Map();
+        this.apps = new Map();
+        this.manualSelection = null;
+        this.selectedName = null;
         this.proxy = null;
-        this.proxySignals = [];
         this.epoch = 0;
-        this.state = this.empty();
-        this.session = new Soup.Session({timeout: 8, max_conns: 1, max_conns_per_host: 1});
         this.coverEpoch = 0;
         this.coverCancel = null;
+        this.discoveryCancel = null;
+        this.state = this.empty();
+        this.session = new Soup.Session({timeout: 8, max_conns: 1, max_conns_per_host: 1});
+        this.appSystem = Shell.AppSystem.get_default();
+        this.life.connect(this.appSystem, 'app-state-changed', (_system, app) => {
+            this.rememberApp(app);
+            this.sync();
+        });
+        this.life.connect(this.appSystem, 'installed-changed', () => {
+            this.scanApps();
+            this.sync();
+        });
         this.nameSignal = Gio.DBus.session.signal_subscribe('org.freedesktop.DBus',
             'org.freedesktop.DBus', 'NameOwnerChanged', '/org/freedesktop/DBus', null,
             Gio.DBusSignalFlags.NONE, (_c, _s, _p, _i, _n, params) => {
-                if (params.deep_unpack()[0].startsWith('org.mpris.MediaPlayer2'))
+                if (!this.life.alive)
+                    return;
+                const [name, , owner] = params.deep_unpack();
+                if (name.startsWith(MPRIS_PREFIX)) {
+                    this.setOwner(name, owner);
                     this.discover();
-            });
-        this.propsSignal = Gio.DBus.session.signal_subscribe(null,
-            'org.freedesktop.DBus.Properties', 'PropertiesChanged', PATH, IFACE,
-            Gio.DBusSignalFlags.NONE, (_c, _s, _p, _i, _n, params) => {
-                try {
-                    const [iface, props] = params.deep_unpack();
-                    if (iface === IFACE) {
-                        const status = props.PlaybackStatus?.deep_unpack?.() ?? props.PlaybackStatus;
-                        if (status === 'Playing' && !this.state.playing)
-                            this.discover();
+                } else if (name.startsWith(':') && !owner) {
+                    // A surviving unique connection is stronger evidence than window count.
+                    for (const record of this.records.values()) {
+                        if (record.owner === name) {
+                            record.ownerAlive = false;
+                            if (record.connected)
+                                this.setOwner(record.name, '');
+                        }
                     }
-                } catch (error) {
-                    this.report(error);
+                    this.sync();
                 }
             });
+        this.scanApps();
+        this.sync();
         this.discover();
     }
 
     empty() {
-        return {connected: false, title: 'Spotify', artist: 'Nada en reproducción',
-            album: '', playing: false, length: 0, position: 0, at: NOW(), track: '/',
+        return {present: false, connected: false, name: null, identity: 'Música',
+            desktopEntry: '', title: 'Música', artist: 'Sin reproducción', album: '',
+            playing: false, length: 0, position: 0, at: NOW(), track: '/',
             canPlay: false, canPause: false, canSeek: false, canNext: false,
-            canPrevious: false, art: '', cover: null, accentColor: '#1ed760'};
+            canPrevious: false, canRaise: false, art: '', cover: null,
+            accentColor: DEFAULT_ACCENT, players: []};
+    }
+
+    get players() {
+        return this.state.players;
+    }
+
+    subscribe(callback) {
+        if (!this.life.alive)
+            return () => {};
+        this.listeners.add(callback);
+        try { callback(this.state); } catch (error) { this.report(error); }
+        return () => this.listeners.delete(callback);
+    }
+
+    emit() {
+        if (!this.life.alive)
+            return;
+        for (const callback of [this.changed, ...this.listeners]) {
+            try { callback?.(this.state); } catch (error) { this.report(error); }
+        }
+    }
+
+    rememberApp(app) {
+        const id = app?.get_id();
+        if (!id)
+            return;
+        const info = app.get_app_info();
+        if (!nativeMusicApp(id, info?.get_categories?.() ?? '')) {
+            this.apps.delete(id);
+            return;
+        }
+        if (app.get_state() === Shell.AppState.STOPPED)
+            this.apps.delete(id);
+        else
+            this.apps.set(id, app);
+    }
+
+    scanApps() {
+        this.apps.clear();
+        for (const info of this.appSystem.get_installed()) {
+            const id = info.get_id();
+            if (nativeMusicApp(id, info.get_categories?.() ?? ''))
+                this.rememberApp(this.appSystem.lookup_app(id));
+        }
+        for (const app of this.appSystem.get_running())
+            this.rememberApp(app);
+    }
+
+    appFor(record) {
+        const entry = desktopId(property(record.root, 'DesktopEntry', record.desktopEntry ?? ''));
+        const short = record.name.slice(MPRIS_PREFIX.length).split('.')[0];
+        const ids = [entry, `${short}.desktop`];
+        // Spotify's native and Flatpak desktop IDs describe the same native app.
+        if (short.toLowerCase() === 'spotify')
+            ids.push('spotify.desktop', 'com.spotify.Client.desktop');
+        for (const id of ids.filter(Boolean)) {
+            const app = this.appSystem.lookup_app(id);
+            if (app)
+                return app;
+        }
+        return null;
     }
 
     async discover() {
         const epoch = ++this.epoch;
+        this.discoveryCancel?.cancel();
+        const cancellable = new Gio.Cancellable();
+        this.discoveryCancel = cancellable;
         try {
-            const names = await listBusNames(this.cancel);
+            const [names] = (await busCall('org.freedesktop.DBus', '/org/freedesktop/DBus',
+                'org.freedesktop.DBus', 'ListNames', null, new GLib.VariantType('(as)'),
+                cancellable)).deep_unpack();
+            const owners = await Promise.all(names.filter(name => name.startsWith(MPRIS_PREFIX))
+                .map(async name => {
+                    try {
+                        const [owner] = (await busCall('org.freedesktop.DBus', '/org/freedesktop/DBus',
+                            'org.freedesktop.DBus', 'GetNameOwner', new GLib.Variant('(s)', [name]),
+                            new GLib.VariantType('(s)'), cancellable)).deep_unpack();
+                        return [name, owner];
+                    } catch (_) { return [name, '']; }
+                }));
             if (!this.life.alive || epoch !== this.epoch)
                 return;
-            const mprisNames = names.filter(n => n.startsWith('org.mpris.MediaPlayer2.'));
-            if (mprisNames.length === 0) {
-                this.detach();
-                this.state = this.empty();
-                this.changed(this.state);
-                return;
+            const available = new Map(owners);
+            for (const record of this.records.values()) {
+                record.ownerAlive = names.includes(record.owner);
+                if (!available.get(record.name) && record.connected)
+                    this.setOwner(record.name, '');
             }
-
-            const activeStates = {};
-            if (mprisNames.length > 1) {
-                const statuses = await Promise.all(mprisNames.map(async n => {
-                    const status = await getPlaybackStatus(n, this.cancel);
-                    return [n, status];
-                }));
-                if (!this.life.alive || epoch !== this.epoch)
-                    return;
-                for (const [n, status] of statuses)
-                    activeStates[n] = {playing: status === 'Playing'};
+            for (const [name, owner] of owners) {
+                if (owner)
+                    this.setOwner(name, owner);
             }
-
-            const name = choosePlayer(mprisNames, activeStates);
-            if (!name) {
-                this.detach();
-                this.state = this.empty();
-                this.changed(this.state);
-                return;
-            }
-
-            if (this.proxy && this.proxy.g_name === name && this.proxy.g_name_owner) {
-                this.sync();
-                return;
-            }
-
-            this.detach();
-            Gio.DBusProxy.new_for_bus(Gio.BusType.SESSION,
-                Gio.DBusProxyFlags.NONE, null, name, PATH, IFACE,
-                this.cancel, (_source, ready) => {
-                    try {
-                        const proxy = Gio.DBusProxy.new_for_bus_finish(ready);
-                        if (!this.life.alive || epoch !== this.epoch)
-                            return;
-                        this.proxy = proxy;
-                        this.proxySignals.push(proxy.connect('g-properties-changed', () => this.sync()));
-                        this.proxySignals.push(proxy.connect('g-signal', (_p, _s, signal, params) => {
-                            if (signal === 'Seeked') {
-                                this.state.position = params.deep_unpack()[0];
-                                this.state.at = NOW();
-                                this.changed(this.state);
-                            }
-                        }));
-                        this.sync();
-                        this.refreshPosition();
-                    } catch (error) { this.report(error); }
-                });
-        } catch (error) {
-            this.report(error);
-        }
+            this.sync();
+        } catch (error) { this.report(error); }
     }
 
-    detach() {
-        for (const id of this.proxySignals)
-            this.proxy?.disconnect(id);
-        this.proxySignals = [];
-        this.proxy = null;
-        this.coverEpoch++;
-        this.coverCancel?.cancel();
+    setOwner(name, owner) {
+        let record = this.records.get(name);
+        if (record?.connected && record.owner === owner)
+            return;
+        if (record) {
+            this.disconnectRecord(record);
+            record.connected = false;
+        }
+        if (!owner) {
+            this.sync();
+            return;
+        }
+        record = {name, owner, ownerAlive: true, connected: true, ready: false,
+            signals: [], cancel: new Gio.Cancellable(), generation: 0,
+            position: 0, at: NOW(), playing: false, track: '/', root: null, player: null};
+        this.records.set(name, record);
+        this.sync();
+        this.attach(record);
+    }
+
+    current(record, generation = record.generation) {
+        return this.life.alive && this.records.get(record.name) === record &&
+            record.connected && record.generation === generation && !record.cancel.is_cancelled();
+    }
+
+    async attach(record) {
+        const generation = record.generation;
+        const results = await Promise.allSettled([
+            newProxy(record.owner, ROOT, record.cancel),
+            newProxy(record.owner, IFACE, record.cancel),
+        ]);
+        if (!this.current(record, generation))
+            return;
+        // Root metadata is optional for imperfect players; controls still require Player.
+        if (results[0].status === 'fulfilled')
+            record.root = results[0].value;
+        if (results[1].status === 'rejected') {
+            this.report(results[1].reason);
+            record.ready = false;
+            this.sync();
+            return;
+        }
+        record.player = results[1].value;
+        record.ready = true;
+        for (const proxy of [record.root, record.player].filter(Boolean)) {
+            record.signals.push([proxy, proxy.connect('g-properties-changed', () => {
+                if (this.current(record, generation))
+                    this.sync();
+            })]);
+        }
+        record.signals.push([record.player, record.player.connect('g-signal', (_p, _s, signal, params) => {
+            if (signal === 'Seeked' && this.current(record, generation)) {
+                // The signal is newer than any Position Get already in flight.
+                record.positionRequest = (record.positionRequest ?? 0) + 1;
+                record.position = params.deep_unpack()[0];
+                record.at = NOW();
+                this.sync();
+            }
+        })]);
+        this.sync();
+        if (this.selectedName !== record.name)
+            this.refreshRecordPosition(record);
+    }
+
+    disconnectRecord(record) {
+        record.generation++;
+        record.cancel.cancel();
+        for (const [proxy, signal] of record.signals)
+            proxy.disconnect(signal);
+        record.signals = [];
+        record.player = null;
+        record.root = null;
+        record.ready = false;
+        record.playing = false;
+    }
+
+    describe(record) {
+        const app = this.appFor(record);
+        const desktopEntry = property(record.root, 'DesktopEntry', '') ||
+            app?.get_id()?.replace(/\.desktop$/, '') || record.desktopEntry || '';
+        const identity = property(record.root, 'Identity', '') || app?.get_name() ||
+            record.identity || 'Reproductor multimedia';
+        const info = app?.get_app_info();
+        const native = nativeMusicApp(desktopId(desktopEntry), info?.get_categories?.() ?? '');
+        const appRunning = app && app.get_state() !== Shell.AppState.STOPPED;
+        record.desktopEntry = desktopEntry;
+        record.identity = identity;
+        const playing = record.ready && property(record.player, 'PlaybackStatus', 'Stopped') === 'Playing';
+        return {name: record.name, identity, desktopEntry, connected: record.connected,
+            playing, present: playerPresent({connected: record.connected, native,
+                appRunning, ownerAlive: record.ownerAlive}), selected: false};
+    }
+
+    selectPlayer(name) {
+        if (name === null) {
+            this.manualSelection = null;
+        } else {
+            const player = this.players.find(candidate => candidate.name === name && candidate.present);
+            if (!player)
+                return false;
+            this.manualSelection = {name, desktopEntry: player.desktopEntry};
+        }
+        this.sync();
+        return true;
     }
 
     get(key, fallback) {
-        return this.proxy?.get_cached_property(key)?.deep_unpack() ?? fallback;
+        const record = this.records.get(this.selectedName);
+        return property(['Identity', 'DesktopEntry', 'CanRaise'].includes(key) ?
+            record?.root : this.proxy, key, fallback);
     }
 
     sync() {
+        if (!this.life.alive)
+            return;
         const old = this.state;
-        const meta = this.get('Metadata', {});
-        const value = (key, fallback) => meta[key]?.deep_unpack?.() ?? meta[key] ?? fallback;
-        const track = value('mpris:trackid', '/');
-        const art = value('mpris:artUrl', '');
-        const album = value('xesam:album', '');
-        this.state = {
-            connected: Boolean(this.proxy?.g_name_owner),
-            title: value('xesam:title', 'Spotify'),
-            artist: value('xesam:artist', []).join(', ') || 'Spotify',
-            album: album ? String(album) : '',
-            playing: this.get('PlaybackStatus', 'Stopped') === 'Playing',
-            length: value('mpris:length', 0), track, art,
-            position: old.track === track ? this.position() : 0, at: NOW(),
-            canPlay: this.get('CanControl', false) && this.get('CanPlay', false),
-            canPause: this.get('CanControl', false) && this.get('CanPause', false),
-            canSeek: this.get('CanControl', false) && this.get('CanSeek', false),
-            canNext: this.get('CanControl', false) && this.get('CanGoNext', false),
-            canPrevious: this.get('CanControl', false) && this.get('CanGoPrevious', false),
-            cover: old.art === art ? old.cover : null,
-            accentColor: old.art === art ? old.accentColor : '#1ed760',
-        };
-        this.changed(this.state);
-        if (old.art !== art)
-            this.loadCover(art);
-        if (old.track !== track || old.playing !== this.state.playing)
-            this.refreshPosition();
+        const descriptors = [];
+        for (const [name, record] of this.records) {
+            const descriptor = this.describe(record);
+            if (descriptor.present)
+                descriptors.push(descriptor);
+            else {
+                this.disconnectRecord(record);
+                this.records.delete(name);
+            }
+        }
+        for (const [id, app] of this.apps) {
+            if (app.get_state() === Shell.AppState.STOPPED)
+                continue;
+            if (descriptors.some(player => sameDesktopApp(player.desktopEntry, id)))
+                continue;
+            descriptors.push({name: `app:${id}`, identity: app.get_name(),
+                desktopEntry: id.replace(/\.desktop$/, ''), present: true,
+                connected: false, playing: false, selected: false});
+        }
+        const selectedName = selectPlayerName(descriptors, this.manualSelection, this.selectedName);
+        const selected = descriptors.find(player => player.name === selectedName);
+        if (this.manualSelection) {
+            const available = descriptors.find(player => player.name === this.manualSelection.name ||
+                (this.manualSelection.desktopEntry && sameDesktopApp(player.desktopEntry, this.manualSelection.desktopEntry)));
+            if (!available)
+                this.manualSelection = null;
+        }
+        this.selectedName = selectedName;
+        const players = orderPlayers(descriptors).map(player => ({...player,
+            selected: player.name === selectedName}));
+        const record = this.records.get(selectedName);
+        const app = record ? this.appFor(record) :
+            this.appSystem.lookup_app(desktopId(selected?.desktopEntry));
+        const canFocusApp = Boolean(app && app.get_state() !== Shell.AppState.STOPPED);
+        this.proxy = record?.ready ? record.player : null;
+        const changedPlayer = old.name !== selectedName;
+        let refresh = false;
+        if (selected && record?.ready) {
+            const meta = mediaMetadata(property(record.player, 'Metadata', {}), selected.identity);
+            const now = NOW();
+            const changedTrack = record.track !== meta.track ||
+                (old.name === selectedName && (old.title !== meta.title || old.artist !== meta.artist));
+            const position = changedTrack ? 0 : positionAt(record.position, record.at,
+                record.playing, meta.length, now);
+            refresh = changedPlayer || changedTrack || record.playing !== selected.playing;
+            record.position = position;
+            record.at = now;
+            record.track = meta.track;
+            record.playing = selected.playing;
+            const retainCover = !changedPlayer && old.art === meta.art;
+            this.state = {...this.empty(), ...selected, ...meta, players,
+                position, at: now, ...mediaCapabilities((key, fallback) =>
+                    property(record.player, key, fallback), record.connected),
+                canRaise: property(record.root, 'CanRaise', false) ||
+                    canFocusApp,
+                cover: retainCover ? old.cover : null,
+                accentColor: retainCover ? old.accentColor : DEFAULT_ACCENT};
+        } else {
+            this.state = {...this.empty(), ...selected, name: selectedName, players,
+                title: selected?.identity ?? 'Música', canRaise: canFocusApp};
+        }
+        if (changedPlayer || old.art !== this.state.art) {
+            this.coverCancel?.cancel();
+            this.coverEpoch++;
+            if (this.state.art)
+                this.loadCover(this.state.art);
+        }
+        this.emit();
+        if (refresh && record)
+            this.refreshRecordPosition(record);
     }
 
     raise() {
-        if (this.proxy) {
-            Gio.DBus.session.call(this.proxy.g_name, PATH, 'org.mpris.MediaPlayer2',
-                'Raise', null, null, Gio.DBusCallFlags.NONE, 2000, this.cancel, () => {});
-        }
-        try {
-            const busName = this.proxy?.g_name ?? '';
-            const match = busName.match(/^org\.mpris\.MediaPlayer2\.([^.]+)/);
-            const appName = match ? match[1] : '';
-            const desktopEntry = this.get('DesktopEntry', '');
-
-            const appSys = Shell.AppSystem.get_default();
-            const candidates = [
-                desktopEntry ? (desktopEntry.endsWith('.desktop') ? desktopEntry : `${desktopEntry}.desktop`) : null,
-                appName ? `${appName}.desktop` : null,
-                appName ? `com.${appName}.Client.desktop` : null,
-                appName === 'spotify' ? 'com.spotify.Client.desktop' : null,
-                'com.spotify.Client.desktop',
-                'spotify.desktop',
-            ].filter(Boolean);
-
-            let app = null;
-            for (const id of candidates) {
-                app = appSys.lookup_app(id);
-                if (app)
-                    break;
-            }
-            if (app)
+        const record = this.records.get(this.selectedName);
+        const name = this.selectedName;
+        const fallback = () => {
+            if (!this.life.alive || name !== this.selectedName)
+                return;
+            const app = record ? this.appFor(record) :
+                this.appSystem.lookup_app(desktopId(this.state.desktopEntry));
+            // An explicit user action may focus an existing app; discovery never activates one.
+            if (app && app.get_state() !== Shell.AppState.STOPPED)
                 app.activate();
-        } catch (_) {}
+        };
+        if (!record?.ready || !property(record.root, 'CanRaise', false)) {
+            fallback();
+            return;
+        }
+        busCall(record.owner, PATH, ROOT, 'Raise', null, null, record.cancel)
+            .catch(error => {
+                if (this.current(record)) {
+                    this.report(error);
+                    fallback();
+                }
+            });
     }
 
     position() {
@@ -233,47 +418,63 @@ export class Music {
             this.state.length, NOW());
     }
 
+    getPosition() {
+        return this.position();
+    }
+
     refreshPosition() {
-        if (!this.proxy)
+        const record = this.records.get(this.selectedName);
+        if (record)
+            this.refreshRecordPosition(record);
+    }
+
+    async refreshRecordPosition(record) {
+        if (!record.ready || !this.current(record))
             return;
-        const proxy = this.proxy;
-        const track = this.state.track;
-        Gio.DBus.session.call(proxy.g_name, PATH, 'org.freedesktop.DBus.Properties',
-            'Get', new GLib.Variant('(ss)', [IFACE, 'Position']),
-            new GLib.VariantType('(v)'), Gio.DBusCallFlags.NONE, 2000,
-            this.cancel, (bus, result) => {
-                try {
-                    const reply = bus.call_finish(result);
-                    if (!this.life.alive || this.proxy !== proxy || track !== this.state.track)
-                        return;
-                    this.state.position = reply.get_child_value(0).get_variant().get_int64();
-                    this.state.at = NOW();
-                    this.changed(this.state);
-                } catch (error) { this.report(error); }
-            });
+        const generation = record.generation;
+        const track = record.track;
+        const request = (record.positionRequest ?? 0) + 1;
+        record.positionRequest = request;
+        try {
+            const reply = await busCall(record.owner, PATH, 'org.freedesktop.DBus.Properties',
+                'Get', new GLib.Variant('(ss)', [IFACE, 'Position']),
+                new GLib.VariantType('(v)'), record.cancel);
+            if (!this.current(record, generation) || record.track !== track ||
+                record.positionRequest !== request)
+                return;
+            record.position = reply.get_child_value(0).get_variant().get_int64();
+            record.at = NOW();
+            if (this.selectedName === record.name)
+                this.sync();
+        } catch (error) { this.report(error); }
     }
 
     command(method) {
-        const key = {Previous: 'canPrevious', Next: 'canNext', PlayPause:
-            this.state.playing ? 'canPause' : 'canPlay'}[method];
-        if (!this.proxy || !this.state[key])
-            return;
-        this.call(method, null);
+        const key = {Previous: 'canPrevious', Next: 'canNext', Play: 'canPlay',
+            Pause: 'canPause', PlayPause: this.state.playing ? 'canPause' : 'canPlay'}[method];
+        if (key && this.state[key])
+            this.call(method, null);
     }
 
     seek(fraction) {
-        if (!this.state.canSeek || this.state.length <= 0 || this.state.track === '/')
+        if (!this.state.canSeek || !Number.isFinite(fraction) ||
+            this.state.length <= 0 || this.state.track === '/' ||
+            this.state.track === '/org/mpris/MediaPlayer2/TrackList/NoTrack')
             return;
         const position = Math.round(Math.max(0, Math.min(1, fraction)) * this.state.length);
         this.call('SetPosition', new GLib.Variant('(ox)', [this.state.track, position]));
     }
 
     call(method, args) {
-        this.proxy.call(method, args, Gio.DBusCallFlags.NONE, 2500, this.cancel, (proxy, result) => {
+        const record = this.records.get(this.selectedName);
+        if (!record?.ready || !this.current(record))
+            return;
+        const generation = record.generation;
+        record.player.call(method, args, FLAGS, 2500, record.cancel, (proxy, result) => {
             try {
                 proxy.call_finish(result);
-                if (this.life.alive)
-                    this.refreshPosition();
+                if (this.current(record, generation))
+                    this.refreshRecordPosition(record);
             } catch (error) { this.report(error); }
         });
     }
@@ -281,63 +482,64 @@ export class Music {
     async loadCover(uri) {
         this.coverCancel?.cancel();
         const epoch = ++this.coverEpoch;
-        this.coverCancel = new Gio.Cancellable();
-        const cancellable = this.coverCancel;
-        const cancel = cancellable;
-        if (!coverUriAllowed(uri))
+        const cancellable = new Gio.Cancellable();
+        this.coverCancel = cancellable;
+        if (!artworkUriAllowed(uri))
             return;
         let stream;
+        let input;
         try {
             if (uri.startsWith('file://')) {
                 const file = Gio.File.new_for_uri(uri);
-                stream = await file.read_async(GLib.PRIORITY_DEFAULT, cancellable);
-                const pixbuf = await GdkPixbuf.Pixbuf.new_from_stream_at_scale_async(stream, 192, 192, true, cancellable);
-                if (!this.life.alive || epoch !== this.coverEpoch)
+                const info = await file.query_info_async('standard::type,standard::size,standard::content-type',
+                    Gio.FileQueryInfoFlags.NOFOLLOW_SYMLINKS, GLib.PRIORITY_DEFAULT, cancellable);
+                if (!localArtworkAllowed({regular: info.get_file_type() === Gio.FileType.REGULAR,
+                    size: info.get_size(), contentType: info.get_content_type()}))
                     return;
-                this.state.accentColor = extractDominantColor(pixbuf);
-                const [ok, thumbnail] = pixbuf.save_to_bufferv('png', [], []);
-                if (ok)
-                    this.state.cover = Gio.BytesIcon.new(GLib.Bytes.new(thumbnail));
-                this.changed(this.state);
-                return;
+                stream = await file.read_async(GLib.PRIORITY_DEFAULT, cancellable);
+            } else {
+                const message = Soup.Message.new('GET', uri);
+                message.flags |= Soup.MessageFlags.NO_REDIRECT;
+                stream = await this.session.send_async(message, GLib.PRIORITY_DEFAULT, cancellable);
+                if (message.status_code !== 200 ||
+                    message.response_headers.get_content_length() > MAX_COVER_BYTES)
+                    return;
             }
-            const message = Soup.Message.new('GET', uri);
-            // Don't follow redirects to a different scheme or local resource.
-            message.flags |= Soup.MessageFlags.NO_REDIRECT;
-            stream = await this.session.send_async(message, GLib.PRIORITY_DEFAULT, cancellable);
-            if (!this.life.alive || epoch !== this.coverEpoch)
-                return;
-            if (message.status_code !== 200 || message.response_headers.get_content_length() > 2 * 1024 * 1024)
-                return;
             const chunks = [];
             let total = 0;
-            while (total <= 2 * 1024 * 1024) {
+            while (total <= MAX_COVER_BYTES) {
+                if (!this.life.alive || epoch !== this.coverEpoch)
+                    return;
                 const chunk = await stream.read_bytes_async(65536, GLib.PRIORITY_DEFAULT, cancellable);
                 if (!chunk.get_size())
                     break;
                 chunks.push(chunk.get_data());
                 total += chunk.get_size();
             }
-            if (total > 2 * 1024 * 1024 || !this.life.alive || epoch !== this.coverEpoch)
+            if (total > MAX_COVER_BYTES || !this.life.alive || epoch !== this.coverEpoch)
                 return;
             const data = new Uint8Array(total);
             let offset = 0;
             for (const chunk of chunks) { data.set(chunk, offset); offset += chunk.length; }
-            const input = Gio.MemoryInputStream.new_from_bytes(GLib.Bytes.new(data));
-            const pixbuf = await GdkPixbuf.Pixbuf.new_from_stream_at_scale_async(input, 192, 192, true, cancellable);
-            input.close(cancel);
+            input = Gio.MemoryInputStream.new_from_bytes(GLib.Bytes.new(data));
+            const pixbuf = await GdkPixbuf.Pixbuf.new_from_stream_at_scale_async(input,
+                192, 192, true, cancellable);
             if (!this.life.alive || epoch !== this.coverEpoch)
                 return;
             this.state.accentColor = extractDominantColor(pixbuf);
             const [ok, thumbnail] = pixbuf.save_to_bufferv('png', [], []);
             if (ok)
                 this.state.cover = Gio.BytesIcon.new(GLib.Bytes.new(thumbnail));
-            this.changed(this.state);
+            this.emit();
         } catch (_) {
-            // Artwork is optional; the musical-note placeholder remains usable offline.
+            // Artwork is optional. Cancellation and invalid images keep the placeholder.
         } finally {
-            if (stream)
-                stream.close_async(GLib.PRIORITY_DEFAULT, cancellable, () => {});
+            try { input?.close(null); } catch (_) { /* optional artwork */ }
+            if (stream) {
+                stream.close_async(GLib.PRIORITY_DEFAULT, null, (source, result) => {
+                    try { source.close_finish(result); } catch (_) { /* optional artwork */ }
+                });
+            }
         }
     }
 
@@ -350,14 +552,19 @@ export class Music {
         this.life.destroy();
         this.epoch++;
         this.cancel.cancel();
-        this.detach();
+        this.discoveryCancel?.cancel();
+        this.coverCancel?.cancel();
+        this.coverEpoch++;
+        for (const record of this.records.values())
+            this.disconnectRecord(record);
+        this.records.clear();
+        this.apps.clear();
+        this.listeners.clear();
+        this.changed = null;
+        this.proxy = null;
         if (this.nameSignal) {
             Gio.DBus.session.signal_unsubscribe(this.nameSignal);
             this.nameSignal = 0;
-        }
-        if (this.propsSignal) {
-            Gio.DBus.session.signal_unsubscribe(this.propsSignal);
-            this.propsSignal = 0;
         }
         this.session.abort();
     }
