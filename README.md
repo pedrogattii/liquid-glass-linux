@@ -152,6 +152,10 @@ Calendario usa el servicio de calendario de GNOME; Clima necesita GWeather 4 y u
 
 **Actualización mientras trabajás:** editar o compilar el repositorio no recarga tu escritorio. El instalador completo aplica el perfil visual; ejecutalo cuando quieras aplicar esos cambios, sin `sudo`. No reinicia el sistema automáticamente. La validación gráfica puede ejecutarse en una sesión headless aislada con `tests/run-shell-smoke.sh` y no interviene en la sesión actual.
 
+Para aplicar todo en el **próximo reinicio**, ejecutá `python3 scripts/next-boot-update.py` sin sudo. Prepara una copia fija y habilita una tarea de usuario, sin iniciarla ahora. Después del reinicio se aplica antes de GNOME: extensiones, perfil visual y temas de Ptyxis/Ghostty disponibles; Brave queda preparado para carga manual. Firefox requiere elegir explícitamente un perfil y no se configura automáticamente. Se conservan los ajustes de la isla y las extensiones ajenas habilitadas; el widget GTK antiguo se deshabilita al aplicar la actualización para dar lugar al nativo. Una salida y entrada sin reiniciar no aplica nada.
+
+La tarea guarda un respaldo y un registro en `~/.local/state/liquid-glass-linux/next-boot/`; solo intenta aplicar una vez, incluso si falla. Consultá `python3 scripts/next-boot-update.py --status` o cancelá antes del reinicio con `python3 scripts/next-boot-update.py --cancel`. Cancelar conserva los respaldos en una carpeta archivada. La tarea no reinicia el equipo ni cierra aplicaciones.
+
 
 Los temas de aplicaciones se preparan por separado y nunca reinician aplicaciones. Consultá [temas de terminales y navegadores](docs/app-themes.md). La herramienta muestra los cambios por defecto y solo los aplica con `--apply`:
 

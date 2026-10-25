@@ -8,6 +8,7 @@ node tests/music-policy.mjs
 node --experimental-vm-modules tests/music-service.mjs
 node tests/profile-format.mjs
 bash tests/app-themes-safe.sh
+python3 tests/test-next-boot-update.py
 node tests/dock-geometry.mjs
 node tests/blur-surfaces.mjs
 node tests/messaging-policy.mjs

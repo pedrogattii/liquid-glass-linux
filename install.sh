@@ -6,6 +6,15 @@
 
 set -e
 
+# A boot-time update must not contact or reload the running Shell.
+OFFLINE=false
+if [ "${1:-}" = "--offline" ] && [ "$#" -eq 1 ]; then
+    OFFLINE=true
+elif [ "$#" -ne 0 ]; then
+    echo "Uso: ./install.sh [--offline]" >&2
+    exit 2
+fi
+
 if [ "${EUID}" -eq 0 ]; then
     echo "Ejecutá ./install.sh como tu usuario, sin sudo. Las personalizaciones se instalan en tu sesión."
     exit 1
@@ -140,7 +149,7 @@ EXTENSIONS=(
     "touchpad-gesture-customization@coooolapps.com"
 )
 
-if command -v gnome-extensions &>/dev/null; then
+if [ "$OFFLINE" = false ] && command -v gnome-extensions &>/dev/null; then
     for ext in "${EXTENSIONS[@]}"; do
         gnome-extensions enable "${ext}" 2>/dev/null || true
         echo -e "  • Habilitada: ${GREEN}${ext}${NC}"
