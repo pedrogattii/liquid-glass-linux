@@ -1,0 +1,1706 @@
+#!/usr/bin/env python3
+"""check-lifecycle.py — Tier 2 lifecycle heuristics for GNOME extensions.
+
+Usage: check-lifecycle.py EXTENSION_DIR
+
+Checks:
+  - R-LIFE-01: Signal connection/disconnection balance
+  - R-LIFE-02: Untracked timeout sources
+  - R-LIFE-03: Missing enable/disable methods
+  - R-LIFE-04: connectObject migration advisory
+  - R-LIFE-05: Async/await without _destroyed guard
+  - R-LIFE-06: timeout_add/idle_add without SOURCE_REMOVE/SOURCE_CONTINUE
+  - R-LIFE-07: DBus proxy creation without disconnect
+  - R-LIFE-08: File monitor without cancel
+  - R-LIFE-09: Keybinding add without remove
+  - R-LIFE-10: InjectionManager without clear() + prototype override detection
+  - R-LIFE-11: Lock screen signal safety
+  - R-LIFE-12: Stored timeout/idle ID without Source.remove() in disable()
+  - R-LIFE-13: Selective disable() detection (conditional return skips cleanup)
+  - R-LIFE-14: unlock-dialog comment requirement
+  - R-LIFE-15: Soup.Session without abort() in disable/destroy
+  - R-LIFE-16: DBus export without unexport in disable/destroy
+  - R-LIFE-17: Timeout ID reassignment without prior Source.remove()
+  - R-LIFE-18: Subprocess without cancellation in disable/destroy
+  - R-LIFE-20: Bus name ownership without release
+  - R-LIFE-21: GSettings signal leak (bare connect without disconnect)
+  - R-LIFE-22: Stage actor leak (add_child/addChrome without remove)
+  - R-LIFE-23: .destroy without parentheses (property access, not method call)
+  - R-LIFE-24: MessageTray source leak (add without destroy)
+  - R-LIFE-25: D-Bus proxy signal leak (bare connectSignal always fails; stored without disconnect warns)
+  - R-LIFE-26: Module-scope mutable state (Map/Set) not cleared in disable()
+  - R-LIFE-27: Module-scope prototype mutation
+  - R-SEC-16: Clipboard + keybinding cross-reference
+  - R-FILE-07: Missing export default class
+
+Output: PIPE-delimited lines: STATUS|check-name|detail
+"""
+
+import json
+import os
+import re
+import sys
+
+
+# Directories without enable()/disable() lifecycle
+_NON_LIFECYCLE_DIRS = frozenset({'service'})
+
+
+def _skip_non_lifecycle(filepath, ext_dir):
+    """Return True if filepath is inside a non-lifecycle directory."""
+    rel = os.path.relpath(filepath, ext_dir)
+    parts = rel.replace(os.sep, '/').split('/')
+    return any(p in _NON_LIFECYCLE_DIRS for p in parts)
+
+
+def _discover_subprocess_dirs(ext_dir):
+    """Return top-level dir names that contain GJS subprocess entry points (#!/usr/bin/env gjs)."""
+    subprocess_dirs = set()
+    base_skip = {'node_modules', '.git', '__pycache__'}
+    for root, dirs, filenames in os.walk(ext_dir):
+        dirs[:] = [d for d in dirs if d not in base_skip]
+        rel_root = os.path.relpath(root, ext_dir)
+        parts = rel_root.split(os.sep)
+        top_dir = None if parts[0] == '.' else parts[0]
+        for name in filenames:
+            if not name.endswith('.js') or top_dir is None:
+                continue
+            filepath = os.path.join(root, name)
+            try:
+                with open(filepath, encoding='utf-8', errors='replace') as f:
+                    for i, line in enumerate(f):
+                        if i >= 2:
+                            break
+                        if line.startswith('#!') and 'gjs' in line:
+                            subprocess_dirs.add(top_dir)
+            except OSError:
+                pass
+    return subprocess_dirs
+
+
+def result(status, check, detail):
+    print(f"{status}|{check}|{detail}")
+
+
+def find_js_files(ext_dir, exclude_prefs=False):
+    """Find JS files, optionally excluding prefs.js and preferences directories."""
+    skip_dirs = {'node_modules', '.git', '__pycache__', 'kwin'}
+    skip_dirs |= _discover_subprocess_dirs(ext_dir)
+    prefs_dirs = {'preferences', 'prefs'}
+    files = []
+    for root, dirs, filenames in os.walk(ext_dir):
+        dirs[:] = [d for d in dirs if d not in skip_dirs]
+        if exclude_prefs:
+            dirs[:] = [d for d in dirs if d not in prefs_dirs]
+        for name in filenames:
+            if name.endswith('.js'):
+                if exclude_prefs and name == 'prefs.js':
+                    continue
+                files.append(os.path.join(root, name))
+    return files
+
+
+def read_file(path):
+    with open(path, encoding='utf-8', errors='replace') as f:
+        return f.read()
+
+
+def _preserve_newlines(match):
+    """Replace block comment content with empty lines to preserve line numbers."""
+    return '\n' * match.group(0).count('\n')
+
+
+def strip_comments(content):
+    """Remove single-line and block comments from JS content."""
+    # Remove block comments
+    content = re.sub(r'/\*.*?\*/', _preserve_newlines, content, flags=re.DOTALL)
+    # Remove single-line comments
+    content = re.sub(r'//.*$', '', content, flags=re.MULTILINE)
+    return content
+
+
+def _resolve_local_parent_content(ext_dir, content):
+    """If extension.js extends a namespace from a local import, return that file's content.
+
+    Handles the pattern: import * as F from './foo.js' + export default class extends F.Bar
+    Returns stripped content of the parent file, or None if not resolved.
+    """
+    # Find 'export default class extends NAMESPACE.Something'
+    m = re.search(r'export\s+default\s+class\b[^{]*\bextends\s+(\w+)\.', content)
+    if not m:
+        # Also handle: export { MyClass as default }
+        # In this case find the class definition separately
+        named_export = re.search(r'\bexport\s*\{[^}]*\bas\s+default\b', content)
+        if not named_export:
+            return None
+        # Extract the exported name to find its class definition
+        named_m = re.search(r'\bexport\s*\{\s*(\w+)\s+as\s+default\b', content)
+        if not named_m:
+            return None
+        class_name = named_m.group(1)
+        m = re.search(
+            rf'class\s+{re.escape(class_name)}\b[^{{]*\bextends\s+(\w+)\.',
+            content,
+        )
+        if not m:
+            return None
+    namespace = m.group(1)
+    # Find 'import * as NAMESPACE from './local.js''
+    imp = re.search(
+        rf"import\s+\*\s+as\s+{re.escape(namespace)}\s+from\s+['\"](\./[^'\"]+)['\"]",
+        content,
+    )
+    if not imp:
+        return None
+    local_path = imp.group(1).lstrip('./')
+    parent_js = os.path.join(ext_dir, local_path)
+    if not os.path.isfile(parent_js):
+        return None
+    return strip_comments(read_file(parent_js))
+
+
+def check_enable_disable(ext_dir):
+    """R-LIFE-03: extension.js must define enable() and disable()."""
+    ext_js = os.path.join(ext_dir, 'extension.js')
+    if not os.path.isfile(ext_js):
+        return  # file-structure check handles this
+
+    content = strip_comments(read_file(ext_js))
+
+    has_enable = bool(re.search(r'\benable\s*\(', content))
+    has_disable = bool(re.search(r'\bdisable\s*\(', content))
+
+    # If methods are missing, check whether they live in a local parent class file.
+    if not (has_enable and has_disable):
+        parent = _resolve_local_parent_content(ext_dir, content)
+        if parent:
+            if not has_enable and re.search(r'\benable\s*\(', parent):
+                has_enable = True
+            if not has_disable and re.search(r'\bdisable\s*\(', parent):
+                has_disable = True
+
+    if not has_enable:
+        result("FAIL", "lifecycle/enable-method", "extension.js missing enable() method")
+    if not has_disable:
+        result("FAIL", "lifecycle/disable-method", "extension.js missing disable() method")
+    if has_enable and has_disable:
+        result("PASS", "lifecycle/enable-disable", "enable() and disable() both defined")
+
+
+def check_default_export(ext_dir):
+    """R-FILE-07: extension.js should have export default class."""
+    ext_js = os.path.join(ext_dir, 'extension.js')
+    if not os.path.isfile(ext_js):
+        return
+
+    content = strip_comments(read_file(ext_js))
+    has_default_export = bool(
+        re.search(r'\bexport\s+default\s+class\b', content)
+        or re.search(r'\bexport\s*\{[^}]*\bas\s+default\b', content)
+    )
+    if not has_default_export:
+        result("WARN", "lifecycle/default-export",
+               "extension.js missing 'export default class' — required for GNOME 45+")
+    else:
+        result("PASS", "lifecycle/default-export", "extension.js has default export class")
+
+
+def check_signal_balance(ext_dir):
+    """R-LIFE-01: Signal connection/disconnection balance."""
+    js_files = find_js_files(ext_dir, exclude_prefs=True)
+    if not js_files:
+        return
+
+    pure_connects = 0
+    pure_disconnects = 0
+    connect_objects = 0
+    smart_connects = 0
+
+    # Check for SignalTracker/SignalManager — file-level auto-cleanup recognition
+    has_signal_tracker = False
+
+    for filepath in js_files:
+        content = read_file(filepath)
+        if re.search(r'\b(SignalTracker|SignalManager)\b', content):
+            has_signal_tracker = True
+        for line in content.splitlines():
+            if re.search(r'\.connectObject\s*\(', line):
+                connect_objects += 1
+            elif re.search(r'\.connectSmart\s*\(', line):
+                smart_connects += 1
+            elif re.search(r"\.connect\s*\(\s*['\"]", line) and not re.search(r'\.disconnect', line):
+                if re.search(r"\.connect\s*\(\s*['\"]destroy['\"]", line):
+                    pass  # 'destroy' signal — inherently self-cleaning
+                elif not re.search(r'this[._]', line):
+                    pass  # local variable signal — inherently scoped
+                else:
+                    pure_connects += 1
+            if re.search(r'\.disconnectObject\s*\(', line):
+                pass  # auto-cleanup
+            elif re.search(r'\.disconnectSmart\s*\(', line):
+                pass  # auto-cleanup
+            elif re.search(r'\.disconnect\s*\(', line) and not re.search(r'\.connect\s*\(', line):
+                pure_disconnects += 1
+
+    # connectObject/connectSmart calls auto-disconnect, so only manual connects need matching disconnects
+    auto_managed = connect_objects + smart_connects
+    imbalance = pure_connects - pure_disconnects
+    if imbalance > 1 and not has_signal_tracker:
+        result("WARN", "lifecycle/signal-balance",
+               f"{pure_connects} manual .connect() calls but only {pure_disconnects} "
+               f".disconnect() calls — verify all signals are disconnected in disable()")
+    else:
+        result("PASS", "lifecycle/signal-balance",
+               f"Signal balance OK ({pure_connects} connects, {pure_disconnects} disconnects, "
+               f"{auto_managed} auto-managed)")
+
+
+def check_untracked_timeouts(ext_dir):
+    """R-LIFE-02: timeout_add/idle_add without stored return value."""
+    js_files = find_js_files(ext_dir, exclude_prefs=True)
+    if not js_files:
+        return
+
+    js_files = [f for f in js_files if not _skip_non_lifecycle(f, ext_dir)]
+
+    untracked = []
+    for filepath in js_files:
+        rel = os.path.relpath(filepath, ext_dir)
+        prev_stripped = ""
+        for lineno, line in enumerate(read_file(filepath).splitlines(), 1):
+            stripped = line.strip()
+            # Skip comments
+            if stripped.startswith('//') or stripped.startswith('*'):
+                prev_stripped = stripped
+                continue
+            # Match timeout_add, idle_add, setTimeout, or setInterval calls
+            if re.search(r'(timeout_add|idle_add|setTimeout|setInterval)\s*\(', stripped):
+                # Check if the return value is assigned or returned on this line
+                if not re.search(r'(=|return)\s*.*(timeout_add|idle_add|setTimeout|setInterval)', stripped):
+                    # Also skip if this call is an argument to a function on the previous line
+                    # e.g., return this.register(\n  GLib.timeout_add(...))
+                    if not prev_stripped.rstrip().endswith('('):
+                        untracked.append(f"{rel}:{lineno}")
+            prev_stripped = stripped
+
+    if untracked:
+        for loc in untracked:
+            result("WARN", "lifecycle/untracked-timeout",
+                   f"{loc}: timer/idle return value not stored — "
+                   f"cannot be removed in disable()")
+    else:
+        result("PASS", "lifecycle/untracked-timeout",
+               "All timeout/idle sources have stored IDs")
+
+
+def check_connect_object_migration(ext_dir):
+    """R-LIFE-04: Suggest connectObject when 3+ manual connect/disconnect pairs."""
+    js_files = find_js_files(ext_dir, exclude_prefs=True)
+    if not js_files:
+        return
+
+    manual_pairs = 0
+    has_connect_object = False
+
+    for filepath in js_files:
+        content = read_file(filepath)
+        if re.search(r'\.(connectObject|connectSmart)\s*\(', content):
+            has_connect_object = True
+        # Count lines that store a connect ID
+        manual_pairs += len(re.findall(
+            r'=\s*\w+\.connect\s*\(', content
+        ))
+
+    if manual_pairs >= 3 and not has_connect_object:
+        result("WARN", "lifecycle/connectObject-migration",
+               f"{manual_pairs} manual signal connections found — "
+               f"consider using connectObject() for automatic cleanup")
+    else:
+        result("PASS", "lifecycle/connectObject-migration",
+               "Signal connection pattern OK")
+
+
+def check_async_destroyed_guard(ext_dir):
+    """R-LIFE-05: Async functions with await should check _destroyed after resuming."""
+    js_files = find_js_files(ext_dir, exclude_prefs=True)
+    if not js_files:
+        return
+
+    has_async_await = False
+    has_destroyed_flag = False
+
+    for filepath in js_files:
+        content = strip_comments(read_file(filepath))
+        if re.search(r'\basync\b', content) and re.search(r'\bawait\b', content):
+            has_async_await = True
+        if re.search(r'\b_destroyed\b', content) or re.search(r'\b_isDestroyed\b', content):
+            has_destroyed_flag = True
+
+    if has_async_await and not has_destroyed_flag:
+        result("WARN", "lifecycle/async-destroyed-guard",
+               "async/await used without _destroyed or _isDestroyed guard — "
+               "extension may act on stale state after disable()")
+    elif has_async_await and has_destroyed_flag:
+        result("PASS", "lifecycle/async-destroyed-guard",
+               "async/await with _destroyed guard detected")
+    # If no async/await, skip silently
+
+
+def check_timeout_return_value(ext_dir):
+    """R-LIFE-06: timeout_add/idle_add callbacks should return SOURCE_REMOVE or SOURCE_CONTINUE."""
+    js_files = find_js_files(ext_dir, exclude_prefs=True)
+    if not js_files:
+        return
+
+    js_files = [f for f in js_files if not _skip_non_lifecycle(f, ext_dir)]
+
+    missing = []
+    for filepath in js_files:
+        rel = os.path.relpath(filepath, ext_dir)
+        lines = read_file(filepath).splitlines()
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            # Skip comments
+            if stripped.startswith('//') or stripped.startswith('*'):
+                continue
+            if re.search(r'(timeout_add|idle_add)\s*\(', stripped):
+                # Look ahead up to 20 lines for SOURCE_REMOVE or SOURCE_CONTINUE
+                lookahead = '\n'.join(lines[i:i + 20])
+                if 'SOURCE_REMOVE' not in lookahead and 'SOURCE_CONTINUE' not in lookahead:
+                    missing.append(f"{rel}:{i + 1}")
+                    if len(missing) >= 3:
+                        break
+        if len(missing) >= 3:
+            break
+
+    if missing:
+        locs = ', '.join(missing)
+        result("WARN", "lifecycle/timeout-return-value",
+               f"timeout_add/idle_add callback missing SOURCE_REMOVE/SOURCE_CONTINUE: {locs}")
+    else:
+        result("PASS", "lifecycle/timeout-return-value",
+               "All timeout/idle callbacks return SOURCE_REMOVE or SOURCE_CONTINUE")
+
+
+def check_keybinding_cleanup(ext_dir):
+    """R-LIFE-09: addKeybinding must have matching removeKeybinding."""
+    js_files = find_js_files(ext_dir)
+    if not js_files:
+        return
+
+    add_count = 0
+    remove_count = 0
+
+    for filepath in js_files:
+        content = strip_comments(read_file(filepath))
+        add_count += len(re.findall(r'\.addKeybinding\s*\(', content))
+        remove_count += len(re.findall(r'\.removeKeybinding\s*\(', content))
+
+    if add_count > 0 and remove_count == 0:
+        result("FAIL", "lifecycle/keybinding-cleanup",
+               f"{add_count} addKeybinding() call(s) but no removeKeybinding() — "
+               f"keybindings will leak after disable()")
+    elif add_count > 0 and remove_count > 0:
+        result("PASS", "lifecycle/keybinding-cleanup",
+               f"Keybinding balance OK ({add_count} add, {remove_count} remove)")
+    # If no keybindings, skip silently
+
+
+def check_dbus_proxy_lifecycle(ext_dir):
+    """R-LIFE-07: DBus proxy creation should have matching disconnect."""
+    js_files = find_js_files(ext_dir, exclude_prefs=True)
+    if not js_files:
+        return
+
+    has_proxy = False
+    has_disconnect = False
+
+    for filepath in js_files:
+        content = strip_comments(read_file(filepath))
+        if (re.search(r'Gio\.DBusProxy\.new_for_bus', content) or
+                re.search(r'new\s+Gio\.DBusProxy', content) or
+                re.search(r'makeProxyWrapper', content)):
+            has_proxy = True
+        if re.search(r'disconnectObject', content) or re.search(r'\.disconnect\s*\(', content):
+            has_disconnect = True
+
+    if has_proxy and not has_disconnect:
+        result("WARN", "lifecycle/dbus-proxy-cleanup",
+               "DBus proxy created but no disconnect/disconnectObject found — "
+               "signals may leak after disable()")
+    elif has_proxy and has_disconnect:
+        result("PASS", "lifecycle/dbus-proxy-cleanup",
+               "DBus proxy with disconnect pattern detected")
+    # If no proxy, skip silently
+
+
+def check_file_monitor_lifecycle(ext_dir):
+    """R-LIFE-08: File monitors should be cancelled in disable()."""
+    js_files = find_js_files(ext_dir, exclude_prefs=True)
+    if not js_files:
+        return
+
+    has_monitor = False
+    has_cancel = False
+
+    for filepath in js_files:
+        content = strip_comments(read_file(filepath))
+        if (re.search(r'\.monitor_file\s*\(', content) or
+                re.search(r'\.monitor_directory\s*\(', content) or
+                re.search(r'\.monitor_children\s*\(', content)):
+            has_monitor = True
+        if re.search(r'\.cancel\s*\(', content):
+            has_cancel = True
+
+    if has_monitor and not has_cancel:
+        result("WARN", "lifecycle/file-monitor-cleanup",
+               "File monitor created but no .cancel() found — "
+               "monitor will continue after disable()")
+    elif has_monitor and has_cancel:
+        result("PASS", "lifecycle/file-monitor-cleanup",
+               "File monitor with cancel pattern detected")
+    # If no monitors, skip silently
+
+
+def check_injection_manager(ext_dir):
+    """R-LIFE-10: InjectionManager must be cleared in disable().
+    Also detects direct prototype overrides (WS1-D enhancement)."""
+    js_files = find_js_files(ext_dir, exclude_prefs=True)
+    if not js_files:
+        return
+
+    has_injection = False
+    has_clear = False
+
+    for filepath in js_files:
+        content = strip_comments(read_file(filepath))
+        if re.search(r'new\s+InjectionManager\s*\(', content):
+            has_injection = True
+        if re.search(r'\.clear\s*\(', content):
+            has_clear = True
+
+    if has_injection and not has_clear:
+        result("FAIL", "lifecycle/injection-cleanup",
+               "new InjectionManager() found but no .clear() call — "
+               "injections will persist after disable()")
+    elif has_injection and has_clear:
+        result("PASS", "lifecycle/injection-cleanup",
+               "InjectionManager with .clear() cleanup detected")
+
+    # WS1-D: Detect direct prototype overrides
+    # Skip module-scope matches (depth 0) — R-LIFE-27 handles those
+    prototype_overrides = []
+    seen_overrides = set()
+    for filepath in js_files:
+        content = strip_comments(read_file(filepath))
+        rel = os.path.relpath(filepath, ext_dir)
+        lines = content.split('\n')
+        depth = 0
+        for line in lines:
+            if depth > 0:
+                # SomeClass.prototype.methodName = ...
+                for m in re.finditer(r'(\w+\.prototype\.\w+)\s*=(?!=)', line):
+                    key = (rel, m.group(1))
+                    if key not in seen_overrides:
+                        seen_overrides.add(key)
+                        prototype_overrides.append(key)
+                # Object.assign(SomeClass.prototype, ...)
+                for m in re.finditer(
+                        r'Object\.assign\s*\(\s*(\w+\.prototype)', line):
+                    label = f"Object.assign({m.group(1)}, ...)"
+                    key = (rel, label)
+                    if key not in seen_overrides:
+                        seen_overrides.add(key)
+                        prototype_overrides.append(key)
+            depth += line.count('{') - line.count('}')
+            if depth < 0:
+                depth = 0
+
+    if prototype_overrides:
+        # Check if disable() restores prototypes
+        ext_js = os.path.join(ext_dir, 'extension.js')
+        disable_restores = False
+        if os.path.isfile(ext_js):
+            ext_content = strip_comments(read_file(ext_js))
+            disable_match = re.search(r'\bdisable\s*\(\s*\)\s*\{', ext_content)
+            if disable_match:
+                start = disable_match.end()
+                depth = 1
+                pos = start
+                while pos < len(ext_content) and depth > 0:
+                    if ext_content[pos] == '{':
+                        depth += 1
+                    elif ext_content[pos] == '}':
+                        depth -= 1
+                    pos += 1
+                disable_body = ext_content[start:pos]
+                # Check for prototype restoration in disable
+                if re.search(r'\w+\.prototype\.\w+\s*=(?!=)', disable_body):
+                    disable_restores = True
+
+        if not disable_restores:
+            for rel, override in prototype_overrides:
+                result("WARN", "lifecycle/prototype-override",
+                       f"{rel}: {override} — direct prototype modification "
+                       f"should be restored in disable()")
+
+
+def check_selective_disable(ext_dir):
+    """R-LIFE-13: Detect conditional returns in disable() that skip cleanup."""
+    ext_js = os.path.join(ext_dir, 'extension.js')
+    if not os.path.isfile(ext_js):
+        return
+
+    content = strip_comments(read_file(ext_js))
+
+    # Extract disable() body using brace depth
+    disable_match = re.search(r'\bdisable\s*\(\s*\)\s*\{', content)
+    if not disable_match:
+        return
+
+    start = disable_match.end()
+    depth = 1
+    pos = start
+    while pos < len(content) and depth > 0:
+        if content[pos] == '{':
+            depth += 1
+        elif content[pos] == '}':
+            depth -= 1
+        pos += 1
+    disable_body = content[start:pos]
+
+    # Look for early returns that skip cleanup: `if (...) return;`
+    # But exclude legitimate null guards like `if (this._x) { this._x.destroy(); }`
+    # and `if (!this._x) return;` (null guard for a single resource)
+    early_return_patterns = re.finditer(
+        r'if\s*\(([^)]+)\)\s*return\s*;', disable_body
+    )
+
+    for m in early_return_patterns:
+        condition = m.group(1).strip()
+
+        # Exclude null guards: `if (!this._x)` — these protect a single destroy
+        if re.match(r'^!\s*this\._\w+$', condition):
+            continue
+
+        # Flag session mode / enabled state checks that skip all cleanup
+        result("FAIL", "lifecycle/selective-disable",
+               f"disable() has conditional return: 'if ({condition}) return;' — "
+               f"disable() must always clean up all resources regardless of state")
+        return  # Report once
+
+    result("PASS", "lifecycle/selective-disable",
+           "disable() does not conditionally skip cleanup")
+
+
+def check_unlock_dialog_comment(ext_dir):
+    """R-LIFE-14: unlock-dialog session mode should have explanatory comment in disable()."""
+    metadata_path = os.path.join(ext_dir, 'metadata.json')
+    if not os.path.isfile(metadata_path):
+        src_path = os.path.join(ext_dir, 'src', 'metadata.json')
+        if os.path.isfile(src_path):
+            metadata_path = src_path
+    if not os.path.isfile(metadata_path):
+        return
+
+    try:
+        with open(metadata_path, encoding='utf-8') as f:
+            metadata = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return
+
+    session_modes = metadata.get('session-modes', [])
+    if 'unlock-dialog' not in session_modes:
+        return  # Not relevant
+
+    ext_js = os.path.join(ext_dir, 'extension.js')
+    if not os.path.isfile(ext_js):
+        return
+
+    # Read raw content (not stripped) to preserve comments
+    raw_content = read_file(ext_js)
+
+    # Extract disable() body from raw content
+    disable_match = re.search(r'\bdisable\s*\(\s*\)\s*\{', raw_content)
+    if not disable_match:
+        return
+
+    start = disable_match.end()
+    depth = 1
+    pos = start
+    while pos < len(raw_content) and depth > 0:
+        if raw_content[pos] == '{':
+            depth += 1
+        elif raw_content[pos] == '}':
+            depth -= 1
+        pos += 1
+    disable_body = raw_content[start:pos]
+
+    # Look for comments mentioning unlock/lock/session/mode
+    comment_keywords = re.search(
+        r'//.*\b(unlock|lock|session|mode)\b', disable_body, re.IGNORECASE
+    )
+
+    if not comment_keywords:
+        result("WARN", "lifecycle/unlock-dialog-comment",
+               "extension declares 'unlock-dialog' session mode but disable() has no "
+               "comment explaining lock screen behavior — add a comment documenting "
+               "which resources need special handling on the lock screen")
+    else:
+        result("PASS", "lifecycle/unlock-dialog-comment",
+               "disable() has comment documenting lock screen behavior")
+
+
+def check_clipboard_keybinding(ext_dir):
+    """R-SEC-16: Clipboard access combined with keybinding registration is suspicious."""
+    js_files = find_js_files(ext_dir, exclude_prefs=True)
+    if not js_files:
+        return
+
+    for filepath in js_files:
+        content = strip_comments(read_file(filepath))
+        rel = os.path.relpath(filepath, ext_dir)
+
+        has_clipboard = bool(re.search(r'St\.Clipboard', content))
+        has_keybinding = bool(re.search(r'addKeybinding', content))
+
+        if has_clipboard and has_keybinding:
+            result("WARN", "lifecycle/clipboard-keybinding",
+                   f"{rel}: St.Clipboard and addKeybinding() in same file — "
+                   f"review whether keybinding-triggered clipboard access is intended "
+                   f"and not a keylogger pattern")
+            return  # Report once
+
+    # No co-occurrence found, skip silently
+
+
+def check_lockscreen_signals(ext_dir):
+    """R-LIFE-11: Lock screen signal safety — keyboard signals with unlock-dialog mode."""
+    metadata_path = os.path.join(ext_dir, 'metadata.json')
+    if not os.path.isfile(metadata_path):
+        src_path = os.path.join(ext_dir, 'src', 'metadata.json')
+        if os.path.isfile(src_path):
+            metadata_path = src_path
+    if not os.path.isfile(metadata_path):
+        return
+
+    try:
+        with open(metadata_path, encoding='utf-8') as f:
+            metadata = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return
+
+    session_modes = metadata.get('session-modes', [])
+    if 'unlock-dialog' not in session_modes:
+        return  # Not relevant if extension doesn't run on lock screen
+
+    js_files = find_js_files(ext_dir, exclude_prefs=True)
+    keyboard_signals = ['key-press-event', 'key-release-event', 'captured-event']
+
+    for filepath in js_files:
+        content = strip_comments(read_file(filepath))
+        rel = os.path.relpath(filepath, ext_dir)
+
+        has_keyboard_signal = False
+        for sig in keyboard_signals:
+            if sig in content:
+                has_keyboard_signal = True
+                break
+
+        if has_keyboard_signal:
+            # Check for session mode guard
+            has_guard = bool(
+                re.search(r'(currentMode|sessionMode|unlock-dialog|session-modes)', content)
+            )
+            if not has_guard:
+                result("FAIL", "lifecycle/lockscreen-signals",
+                       f"{rel}: keyboard signal connected but session-modes includes "
+                       f"'unlock-dialog' — must disconnect or guard keyboard signals on lock screen")
+            else:
+                result("PASS", "lifecycle/lockscreen-signals",
+                       f"{rel}: keyboard signal with session mode guard detected")
+            return  # Only report once
+
+    # Has unlock-dialog mode but no keyboard signals — that's fine
+
+
+def check_timeout_removal_in_disable(ext_dir):
+    """R-LIFE-12: Stored timeout IDs should have Source.remove() in disable()."""
+    ext_js = os.path.join(ext_dir, 'extension.js')
+    if not os.path.isfile(ext_js):
+        return
+
+    content = strip_comments(read_file(ext_js))
+
+    # Find stored timeout IDs: this._foo = ...timeout_add/idle_add/setTimeout/setInterval...
+    stored_ids = set()
+    for m in re.finditer(r'this\.(_\w+)\s*=\s*.*?(timeout_add|idle_add|setTimeout|setInterval)', content):
+        stored_ids.add(m.group(1))
+
+    if not stored_ids:
+        return  # No stored timeouts to check
+
+    # Extract disable() and destroy() bodies (cleanup may be in either)
+    cleanup_body = ''
+    for method_pat in [r'\bdisable\s*\(\s*\)\s*\{', r'\bdestroy\s*\(\s*\)\s*\{']:
+        for m_method in re.finditer(method_pat, content):
+            start = m_method.end()
+            depth = 1
+            pos = start
+            while pos < len(content) and depth > 0:
+                if content[pos] == '{':
+                    depth += 1
+                elif content[pos] == '}':
+                    depth -= 1
+                pos += 1
+            cleanup_body += content[start:pos] + '\n'
+
+    if not cleanup_body:
+        return  # check_enable_disable handles missing disable()
+
+    # Check if Source.remove/clearTimeout/clearInterval is called in cleanup methods
+    has_remove = bool(re.search(
+        r'(Source\.remove|source_remove|clearTimeout|clearInterval)\s*\(', cleanup_body))
+
+    missing = []
+    for var_name in stored_ids:
+        # Check cleanup methods first, then fall back to file-wide search
+        # (cleanup may be in a helper method called from disable/destroy)
+        var_removed = bool(re.search(
+            rf'(Source\.remove|source_remove|clearTimeout|clearInterval)\s*\(\s*this\.{re.escape(var_name)}',
+            cleanup_body
+        ))
+        if not var_removed:
+            # Also check the entire file — helper methods may clear timers
+            var_removed = bool(re.search(
+                rf'(Source\.remove|source_remove|clearTimeout|clearInterval)\s*\(\s*this\.{re.escape(var_name)}',
+                content
+            ))
+        if not var_removed and not has_remove:
+            missing.append(var_name)
+
+    if missing:
+        for var_name in sorted(missing):
+            result("FAIL", "lifecycle/timeout-not-removed",
+                   f"this.{var_name} stores timeout/idle source but no "
+                   f"GLib.Source.remove() call found in disable()")
+    else:
+        result("PASS", "lifecycle/timeout-not-removed",
+               "All stored timeout/idle IDs have Source.remove() in disable()")
+
+
+def check_pkexec_user_writable(ext_dir):
+    """R-SEC-18: pkexec target must not be user-writable."""
+    js_files = find_js_files(ext_dir)
+    if not js_files:
+        return
+
+    user_writable_prefixes = ['/home/', '/tmp/', './', '../']
+
+    for filepath in js_files:
+        content = strip_comments(read_file(filepath))
+        rel = os.path.relpath(filepath, ext_dir)
+
+        # Match pkexec in argv arrays: ['pkexec', '/path/to/script']
+        for m in re.finditer(
+            r"""pkexec['"]\s*,\s*['"]([^'"]+)['"]""", content
+        ):
+            target = m.group(1)
+            for prefix in user_writable_prefixes:
+                if target.startswith(prefix):
+                    result("FAIL", "lifecycle/pkexec-user-writable",
+                           f"{rel}: pkexec target '{target}' is user-writable — "
+                           f"attacker can replace it with arbitrary code")
+                    return
+
+        # Match pkexec in command strings: 'pkexec /path/to/script'
+        for m in re.finditer(
+            r"""['"]pkexec\s+([^'"]+)['"]""", content
+        ):
+            target = m.group(1).split()[0]
+            for prefix in user_writable_prefixes:
+                if target.startswith(prefix):
+                    result("FAIL", "lifecycle/pkexec-user-writable",
+                           f"{rel}: pkexec target '{target}' is user-writable — "
+                           f"attacker can replace it with arbitrary code")
+                    return
+
+
+def check_destroy_then_null(ext_dir):
+    """GAP-004: destroy() calls should be followed by null assignment."""
+    js_files = find_js_files(ext_dir, exclude_prefs=True)
+    if not js_files:
+        return
+
+    violations = []
+    for filepath in js_files:
+        rel = os.path.relpath(filepath, ext_dir)
+        lines = read_file(filepath).splitlines()
+
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped.startswith('//') or stripped.startswith('*'):
+                continue
+            # Match this._xxx.destroy() or this._xxx?.destroy()
+            m = re.search(r'(this\._\w+)\??\.\bdestroy\s*\(', stripped)
+            if not m:
+                continue
+            prop = m.group(1)  # e.g. this._widget
+            # Look ahead 5 lines for null assignment
+            lookahead = '\n'.join(lines[i:i + 6])
+            null_pattern = re.escape(prop) + r'\s*=\s*null\b'
+            if not re.search(null_pattern, lookahead):
+                violations.append(f"{rel}:{i + 1}")
+                if len(violations) >= 5:
+                    break
+        if len(violations) >= 5:
+            break
+
+    if violations:
+        for loc in violations:
+            result("WARN", "lifecycle/destroy-no-null",
+                   f"{loc}: .destroy() without null assignment — "
+                   f"set reference to null after destroy to prevent stale access")
+    else:
+        result("PASS", "lifecycle/destroy-no-null",
+               "All destroy() calls followed by null assignment")
+
+
+def check_dbus_export_lifecycle(ext_dir):
+    """GAP-003: DBus exported interfaces must be unexported in disable()/destroy()."""
+    js_files = find_js_files(ext_dir, exclude_prefs=True)
+    if not js_files:
+        return
+
+    export_patterns = [
+        (r'\.export\s*\(', '.unexport('),
+        (r'\.export_action_group\s*\(', 'unexport_action_group('),
+        (r'\.export_menu_model\s*\(', 'unexport_menu_model('),
+    ]
+
+    exports_found = []
+    all_content = ''
+
+    for filepath in js_files:
+        content = strip_comments(read_file(filepath))
+        all_content += content
+        rel = os.path.relpath(filepath, ext_dir)
+        for export_pat, _ in export_patterns:
+            # Skip ESM 'export' keyword — only match method calls on objects
+            for m in re.finditer(export_pat, content):
+                # Check that it's a method call (preceded by identifier or closing paren/bracket)
+                start = m.start()
+                if start > 0 and content[start - 1] not in (' ', '\t', '\n', ';', '{'):
+                    exports_found.append((rel, export_pat))
+                    break
+
+    if not exports_found:
+        return  # No DBus exports found
+
+    # Check for matching unexports anywhere in extension code
+    has_unexport = False
+    for _, unexport_method in export_patterns:
+        if unexport_method.replace('(', '\\s*\\(').replace('.', '\\.') and \
+                re.search(re.escape(unexport_method).replace(r'\(', r'\s*\('), all_content):
+            has_unexport = True
+            break
+
+    if not has_unexport:
+        for rel, _ in exports_found:
+            result("FAIL", "lifecycle/dbus-export-leak",
+                   f"{rel}: DBus interface exported but no .unexport() found — "
+                   f"exported interfaces must be unexported in disable()")
+            return  # Report once
+    else:
+        result("PASS", "lifecycle/dbus-export-leak",
+               "DBus export/unexport lifecycle OK")
+
+
+def check_timeout_reassignment(ext_dir):
+    """GAP-010: Timeout ID reassignment without prior Source.remove() leaks GLib sources."""
+    js_files = find_js_files(ext_dir, exclude_prefs=True)
+    if not js_files:
+        return
+
+    violations = []
+    for filepath in js_files:
+        rel = os.path.relpath(filepath, ext_dir)
+        content = strip_comments(read_file(filepath))
+        lines = content.splitlines()
+
+        for i, line in enumerate(lines):
+            # Match: this._xxx = ...timeout_add/idle_add/setTimeout/setInterval(
+            m = re.search(r'(this\._\w+)\s*=\s*.*?(timeout_add|idle_add|setTimeout|setInterval)\s*\(', line)
+            if not m:
+                continue
+            prop = m.group(1)
+            # Check if this property is assigned timeout/idle elsewhere too (reassignment pattern)
+            assign_count = len(re.findall(
+                re.escape(prop) + r'\s*=\s*.*?(timeout_add|idle_add|setTimeout|setInterval)\s*\(',
+                content
+            ))
+            if assign_count < 2:
+                continue  # Single assignment, not a reassignment pattern
+            # Look back 5 lines for Source.remove(this._xxx)
+            lookback = '\n'.join(lines[max(0, i - 5):i])
+            remove_pat = r'(Source\.remove|source_remove|clearTimeout|clearInterval)\s*\(\s*' + re.escape(prop)
+            if not re.search(remove_pat, lookback):
+                violations.append(f"{rel}:{i + 1}")
+                break  # One per file
+
+    if violations:
+        for loc in violations:
+            result("WARN", "lifecycle/timeout-reassignment",
+                   f"{loc}: timeout/idle ID reassigned without prior "
+                   f"GLib.Source.remove() — may leak GLib sources")
+    else:
+        result("PASS", "lifecycle/timeout-reassignment",
+               "No timeout ID reassignment without removal detected")
+
+
+def check_subprocess_cancellation(ext_dir):
+    """GAP-012: Gio.Subprocess should have cancellation in disable()/destroy()."""
+    js_files = find_js_files(ext_dir, exclude_prefs=True)
+    if not js_files:
+        return
+
+    has_subprocess = False
+    has_cancel = False
+
+    for filepath in js_files:
+        content = strip_comments(read_file(filepath))
+        if (re.search(r'new\s+Gio\.Subprocess', content) or
+                re.search(r'Gio\.Subprocess\.new', content) or
+                re.search(r'Gio\.SubprocessLauncher', content)):
+            has_subprocess = True
+        if (re.search(r'\.force_exit\s*\(', content) or
+                re.search(r'\.send_signal\s*\(', content) or
+                re.search(r'cancellable.*\.cancel\s*\(', content, re.IGNORECASE)):
+            has_cancel = True
+
+    if has_subprocess and not has_cancel:
+        result("WARN", "lifecycle/subprocess-no-cancel",
+               "Gio.Subprocess created but no .force_exit(), .send_signal(), or "
+               "cancellable.cancel() found — subprocess may outlive disable()")
+    elif has_subprocess and has_cancel:
+        result("PASS", "lifecycle/subprocess-no-cancel",
+               "Subprocess with cancellation pattern detected")
+    # If no subprocess, skip silently
+
+
+def check_clipboard_network(ext_dir):
+    """GAP-025: Clipboard + network access cross-reference."""
+    js_files = find_js_files(ext_dir, exclude_prefs=True)
+    if not js_files:
+        return
+
+    has_clipboard = False
+    has_network = False
+
+    for filepath in js_files:
+        content = strip_comments(read_file(filepath))
+        if re.search(r'St\.Clipboard', content):
+            has_clipboard = True
+        if (re.search(r'Soup\.Session', content) or
+                re.search(r'Gio\.SocketClient', content) or
+                re.search(r'\bfetch\s*\(', content)):
+            has_network = True
+
+    if has_clipboard and has_network:
+        result("WARN", "lifecycle/clipboard-network",
+               "Extension accesses both St.Clipboard and network APIs — "
+               "manual review required to verify clipboard data is not exfiltrated")
+    # Skip silently if no co-occurrence
+
+
+def check_soup_session_abort(ext_dir):
+    """R-LIFE-15: Soup.Session should be aborted in disable()/destroy()."""
+    js_files = find_js_files(ext_dir, exclude_prefs=True)
+    if not js_files:
+        return
+
+    has_session = False
+    has_abort = False
+
+    for filepath in js_files:
+        content = strip_comments(read_file(filepath))
+        if (re.search(r'new\s+Soup\.Session', content) or
+                re.search(r'Soup\.Session\.new', content)):
+            has_session = True
+        if re.search(r'\.abort\s*\(', content):
+            has_abort = True
+
+    if has_session and not has_abort:
+        result("WARN", "lifecycle/soup-session-abort",
+               "Soup.Session created but no .abort() found — "
+               "pending requests will continue after disable()")
+    elif has_session and has_abort:
+        result("PASS", "lifecycle/soup-session-abort",
+               "Soup.Session with .abort() cleanup detected")
+    # If no session, skip silently
+
+
+def check_bus_name_lifecycle(ext_dir):
+    """R-LIFE-20: D-Bus bus name ownership must be released in disable()/destroy()."""
+    js_files = find_js_files(ext_dir, exclude_prefs=True)
+    if not js_files:
+        return
+
+    has_own = False
+    has_unown = False
+
+    for filepath in js_files:
+        content = strip_comments(read_file(filepath))
+        if (re.search(r'\bbus_own_name\b', content) or
+                re.search(r'\.own_name\s*\(', content)):
+            has_own = True
+        if (re.search(r'\bbus_unown_name\b', content) or
+                re.search(r'\.unown_name\s*\(', content)):
+            has_unown = True
+
+    if has_own and not has_unown:
+        result("WARN", "lifecycle/bus-name-ownership",
+               "Gio.bus_own_name() found but no bus_unown_name() — "
+               "bus name will not be released after disable()")
+    elif has_own and has_unown:
+        result("PASS", "lifecycle/bus-name-ownership",
+               "Bus name own/unown lifecycle OK")
+    # If no bus name ownership, skip silently
+
+
+def check_destroy_without_call(ext_dir):
+    """R-LIFE-23: .destroy without () is property access, not method call."""
+    js_files = find_js_files(ext_dir, exclude_prefs=True)
+    if not js_files:
+        return
+
+    violations = []
+    for filepath in js_files:
+        content = strip_comments(read_file(filepath))
+        rel = os.path.relpath(filepath, ext_dir)
+
+        for lineno, line in enumerate(content.splitlines(), 1):
+            # Match .destroy at word boundary (excludes .destroyAll etc.), not followed by () or ?.() (excludes actual calls)
+            for m in re.finditer(r'\.destroy\b(?!\s*(\?\.)?\s*\()', line):
+                before = line[:m.start()]
+                after = line[m.end():]
+
+                # Skip: callback reference in signal connection
+                if re.search(r'(?<!dis)connect\w*\s*\(', before):
+                    continue
+                # Skip: Function.prototype reference (.bind/.call/.apply)
+                if re.search(r'\.(bind|call|apply)\s*\(', before):
+                    continue
+                if re.search(r'\.(bind|call|apply)\s*\(', after):
+                    continue
+
+                # Skip: property existence check (only when .destroy is inside the condition)
+                if re.search(r'\btypeof\b', before):
+                    continue
+                if_match = re.search(r'\bif\s*\(', before)
+                if if_match:
+                    # Check .destroy is inside the condition, not in the body
+                    after_if_open = before[if_match.end():]
+                    depth = 1
+                    for ch in after_if_open:
+                        if ch == '(':
+                            depth += 1
+                        elif ch == ')':
+                            depth -= 1
+                            if depth == 0:
+                                break
+                    if depth > 0:
+                        # Condition still open — .destroy is being tested
+                        continue
+
+                # Skip: ternary existence check (e.g., actor.destroy ? actor.destroy() : null)
+                after_stripped = after.lstrip()
+                if after_stripped.startswith('?') and not after_stripped.startswith('?.'):
+                    continue
+
+                # Skip: property assignment (not comparison)
+                if after_stripped.startswith('=') and not after_stripped.startswith('=='):
+                    continue
+
+                # Skip: destructuring
+                if re.search(r'\{\s*destroy\b', line):
+                    continue
+
+                violations.append(f"{rel}:{lineno}")
+
+    if violations:
+        locs = violations[:5]
+        for loc in locs:
+            result("WARN", "lifecycle/destroy-no-call",
+                   f"{loc}: .destroy without () — property access, not method call")
+        if len(violations) > 5:
+            result("WARN", "lifecycle/destroy-no-call",
+                   f"(and {len(violations) - 5} more)")
+    else:
+        result("PASS", "lifecycle/destroy-no-call",
+               "All .destroy references include parentheses")
+
+
+def check_widget_lifecycle(ext_dir):
+    """Detect widgets created in enable() but not destroyed in disable()."""
+    ext_file = os.path.join(ext_dir, 'extension.js')
+    if not os.path.isfile(ext_file):
+        return
+
+    content = read_file(ext_file)
+    clean = strip_comments(content)
+    lines = clean.splitlines()
+
+    # Find widgets assigned to this._xxx in enable()
+    widget_re = re.compile(
+        r'this\.(_\w+)\s*=\s*new\s+'
+        r'(St\.\w+|PanelMenu\.\w+|PopupMenu\.\w+|Clutter\.\w+)')
+    destroy_re_template = r'this\.{name}\.(destroy|remove_child|remove_all_children)\s*\('
+    null_re_template = r'this\.{name}\s*=\s*null'
+
+    in_enable = False
+    in_disable = False
+    brace_depth = 0
+    created_widgets = {}  # name -> line number
+
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if re.search(r'\benable\s*\(', stripped):
+            in_enable = True
+            brace_depth = 0
+        if re.search(r'\bdisable\s*\(', stripped):
+            in_disable = True
+            brace_depth = 0
+
+        if in_enable:
+            brace_depth += stripped.count('{') - stripped.count('}')
+            m = widget_re.search(stripped)
+            if m:
+                created_widgets[m.group(1)] = i + 1
+            if brace_depth <= 0 and '{' in stripped:
+                in_enable = False
+
+        if in_disable:
+            brace_depth += stripped.count('{') - stripped.count('}')
+            if brace_depth <= 0 and '{' in stripped:
+                in_disable = False
+
+    if not created_widgets:
+        result("PASS", "lifecycle/widget-destroy", "No widgets tracked in enable()")
+        return
+
+    # Check if each widget is destroyed or nulled in disable()
+    leaked = []
+    for name, lineno in created_widgets.items():
+        destroy_pat = destroy_re_template.format(name=re.escape(name))
+        null_pat = null_re_template.format(name=re.escape(name))
+        if not re.search(destroy_pat, clean) and not re.search(null_pat, clean):
+            leaked.append(f"{name}(L{lineno})")
+
+    if leaked:
+        result("WARN", "lifecycle/widget-destroy",
+               f"Widget(s) created in enable() but not destroyed/nulled in disable(): "
+               f"{', '.join(leaked[:5])}")
+    else:
+        result("PASS", "lifecycle/widget-destroy",
+               f"All {len(created_widgets)} widget(s) properly cleaned up")
+
+
+def extract_cleanup_bodies(js_files):
+    """Extract concatenated text of disable/destroy/onDestroy method bodies."""
+    cleanup_re = re.compile(
+        r'\b(?:disable|destroy|_destroy\w*|onDestroy)\s*\(')
+    cleanup_text = ''
+    for filepath in js_files:
+        content = strip_comments(read_file(filepath))
+        lines = content.splitlines()
+        i = 0
+        while i < len(lines):
+            if cleanup_re.search(lines[i]):
+                depth = 0
+                started = False
+                for j in range(i, len(lines)):
+                    depth += lines[j].count('{') - lines[j].count('}')
+                    if '{' in lines[j]:
+                        started = True
+                    cleanup_text += lines[j] + '\n'
+                    if started and depth <= 0:
+                        break
+                i = j + 1 if started else i + 1
+            else:
+                i += 1
+    return cleanup_text
+
+
+def check_stage_actor_lifecycle(ext_dir):
+    """R-LIFE-22: Stage actor add without matching remove in disable()/destroy()."""
+    js_files = find_js_files(ext_dir, exclude_prefs=True)
+    if not js_files:
+        return
+
+    # Patterns that add actors to stage/chrome
+    add_patterns = [
+        (r'global\.stage\.add_child\s*\(\s*this\.(_\w+)', 'global.stage.remove_child'),
+        (r'Main\.layoutManager\.addTopChrome\s*\(\s*this\.(_\w+)', 'removeTopChrome'),
+        (r'Main\.layoutManager\.addChrome\s*\(\s*this\.(_\w+)', 'removeChrome'),
+    ]
+
+    added_actors = []  # (var_name, file_rel, lineno, remove_method)
+
+    for filepath in js_files:
+        content = strip_comments(read_file(filepath))
+        rel = os.path.relpath(filepath, ext_dir)
+        for lineno, line in enumerate(content.splitlines(), 1):
+            for add_re, remove_method in add_patterns:
+                m = re.search(add_re, line)
+                if m:
+                    added_actors.append((m.group(1), rel, lineno, remove_method))
+
+    if not added_actors:
+        return
+
+    cleanup_text = extract_cleanup_bodies(js_files)
+
+    leaked = []
+    for var_name, rel, lineno, remove_method in added_actors:
+        escaped = re.escape(var_name)
+        has_remove = bool(re.search(
+            rf'{re.escape(remove_method)}\s*\(\s*this\.{escaped}', cleanup_text))
+        has_destroy = bool(re.search(
+            rf'this\.{escaped}\.destroy\s*\(', cleanup_text))
+        if not has_remove and not has_destroy:
+            leaked.append(f"this.{var_name} ({rel}:{lineno})")
+
+    if leaked:
+        result("FAIL", "lifecycle/stage-actor-leak",
+               f"Actor(s) added to stage/chrome but not removed in "
+               f"disable()/destroy(): {', '.join(leaked[:5])}")
+    else:
+        result("PASS", "lifecycle/stage-actor-leak",
+               f"All {len(added_actors)} stage/chrome actor(s) properly cleaned up")
+
+
+def check_message_tray_lifecycle(ext_dir):
+    """R-LIFE-24: MessageTray source added without destroy in disable()/destroy()."""
+    js_files = find_js_files(ext_dir, exclude_prefs=True)
+    if not js_files:
+        return
+
+    add_re = re.compile(r'Main\.messageTray\.add\s*\(\s*this\.(_\w+)')
+    added_sources = []  # (var_name, file_rel, lineno)
+
+    for filepath in js_files:
+        content = strip_comments(read_file(filepath))
+        rel = os.path.relpath(filepath, ext_dir)
+        for lineno, line in enumerate(content.splitlines(), 1):
+            m = add_re.search(line)
+            if m:
+                added_sources.append((m.group(1), rel, lineno))
+
+    if not added_sources:
+        return
+
+    cleanup_text = extract_cleanup_bodies(js_files)
+
+    leaked = []
+    for var_name, rel, lineno in added_sources:
+        escaped = re.escape(var_name)
+        has_destroy = bool(re.search(
+            rf'this\.{escaped}\.destroy\s*\(', cleanup_text))
+        if not has_destroy:
+            leaked.append(f"this.{var_name} ({rel}:{lineno})")
+
+    if leaked:
+        result("WARN", "lifecycle/messagetray-source-leak",
+               f"MessageTray source(s) added but not destroyed in "
+               f"disable()/destroy(): {', '.join(leaked[:5])}")
+    else:
+        result("PASS", "lifecycle/messagetray-source-leak",
+               f"All {len(added_sources)} messageTray source(s) properly cleaned up")
+
+
+def check_gsettings_signal_leak(ext_dir):
+    """R-LIFE-21: Bare settings.connect() without stored ID is a guaranteed leak."""
+    js_files = find_js_files(ext_dir, exclude_prefs=True)
+    if not js_files:
+        return
+
+    js_files = [f for f in js_files if not _skip_non_lifecycle(f, ext_dir)]
+    if not js_files:
+        return
+
+    bare_connects = []
+    has_auto_cleanup_bare = False
+
+    for filepath in js_files:
+        content = strip_comments(read_file(filepath))
+        rel = os.path.relpath(filepath, ext_dir)
+
+        # Per-file auto-cleanup detection: connectObject/disconnectObject
+        # manage signals per-object-per-owner, so auto-cleanup in one file
+        # does NOT protect bare .connect() calls in a different file.
+        file_has_auto_cleanup = bool(
+            re.search(r'\.disconnectObject\s*\(', content) or
+            re.search(r'\.connectObject\s*\(', content) or
+            re.search(r'\b(SignalTracker|SignalManager|connectSmart|disconnectSmart)\b', content))
+
+        file_bare_connects = []
+        prev_stripped = ''
+        in_array_literal = False
+        for lineno, line in enumerate(content.splitlines(), 1):
+            stripped = line.strip()
+            # Track array literal assignment context: ids = [ ... ]
+            if not in_array_literal and re.search(r'=\s*\[', stripped):
+                idx = stripped.rindex('[')
+                if ']' not in stripped[idx + 1:]:
+                    in_array_literal = True
+            elif in_array_literal and ']' in stripped:
+                in_array_literal = False
+            # Match settings.connect('changed...') without assignment
+            if not re.search(r"\.connect\s*\(\s*['\"]changed", stripped):
+                if stripped:
+                    prev_stripped = stripped
+                continue
+            # Skip if return value is stored (has = before .connect on this line)
+            if re.search(r'=\s*\S+\.connect\s*\(', stripped):
+                prev_stripped = stripped
+                continue
+            # Skip if pushed to array (.push(settings.connect(...)))
+            if re.search(r'\.push\s*\(\s*\S+\.connect\s*\(', stripped):
+                prev_stripped = stripped
+                continue
+            # Skip if this line is inside a .push() call (multi-line pattern)
+            if re.search(r'\.push\s*\(\s*$', prev_stripped):
+                prev_stripped = stripped
+                continue
+            # Skip if connect() result stored as 'id' property in an object literal
+            # e.g. arr.push({ settings, id: settings.connect('changed::...', ...) })
+            if re.search(r'\bid\s*:\s*\S+\.connect\s*\(', stripped):
+                prev_stripped = stripped
+                continue
+            # Skip if inside array literal (IDs collected into array)
+            if in_array_literal:
+                prev_stripped = stripped
+                continue
+            # Skip connectObject/connectSmart variants
+            if re.search(r'\.(connectObject|connectSmart)\s*\(', stripped):
+                prev_stripped = stripped
+                continue
+            file_bare_connects.append(f"{rel}:{lineno}")
+            prev_stripped = stripped
+
+        if file_bare_connects:
+            if file_has_auto_cleanup:
+                has_auto_cleanup_bare = True
+            else:
+                bare_connects.extend(file_bare_connects)
+
+    if bare_connects:
+        count = len(bare_connects)
+        locs = ', '.join(bare_connects[:5])
+        suffix = f' (and {count - 5} more)' if count > 5 else ''
+        result("FAIL", "lifecycle/gsettings-signal-leak",
+               f"{count} bare settings.connect('changed::...') without stored ID "
+               f"and no disconnectObject/connectObject cleanup: {locs}{suffix}")
+    elif has_auto_cleanup_bare:
+        result("PASS", "lifecycle/gsettings-signal-leak",
+               "Bare settings.connect() found but auto-cleanup mechanism present")
+    # If no bare connects, skip silently
+
+
+def check_dbus_signal_leak(ext_dir):
+    """R-LIFE-25: D-Bus proxy signal leak detection.
+
+    Bare proxy.connectSignal() without stored ID is a guaranteed leak (FAIL).
+    Stored connectSignal() IDs without disconnectSignal() in same file are
+    advisory (WARN) — per-file scoping avoids cross-file false positives.
+    Recognizes .disconnectSignal.bind() as valid cleanup pattern.
+    """
+    js_files = find_js_files(ext_dir, exclude_prefs=True)
+    if not js_files:
+        return
+
+    js_files = [f for f in js_files if not _skip_non_lifecycle(f, ext_dir)]
+    if not js_files:
+        return
+
+    bare_connects = []
+    stored_no_disconnect_files = []
+
+    for filepath in js_files:
+        content = strip_comments(read_file(filepath))
+        rel = os.path.relpath(filepath, ext_dir)
+
+        # Per-file D-Bus cleanup detection: disconnectSignal() or .disconnectSignal.bind(
+        # (connectObject/disconnectObject manage GObject signals, not D-Bus signals)
+        file_has_disconnect = bool(
+            re.search(r'\.disconnectSignal\s*[\(.]', content))
+
+        file_stored_connects = []
+        prev_stripped = ''
+        for lineno, line in enumerate(content.splitlines(), 1):
+            stripped = line.strip()
+            # Match proxy.connectSignal(
+            if not re.search(r'\.connectSignal\s*\(', stripped):
+                if stripped:
+                    prev_stripped = stripped
+                continue
+            # Skip connectObject/connectSmart variants
+            if re.search(r'\.(connectObject|connectSmart)\s*\(', stripped):
+                prev_stripped = stripped
+                continue
+            # Check if return value is stored (has = before .connectSignal on this line)
+            if re.search(r'=\s*\S+\.connectSignal\s*\(', stripped):
+                file_stored_connects.append(f"{rel}:{lineno}")
+                prev_stripped = stripped
+                continue
+            # Check if pushed to array (.push(proxy.connectSignal(...)))
+            if re.search(r'\.push\s*\(\s*\S+\.connectSignal\s*\(', stripped):
+                file_stored_connects.append(f"{rel}:{lineno}")
+                prev_stripped = stripped
+                continue
+            # Check if this line is inside a .push() call (multi-line pattern)
+            if re.search(r'\.push\s*\(\s*$', prev_stripped):
+                file_stored_connects.append(f"{rel}:{lineno}")
+                prev_stripped = stripped
+                continue
+            bare_connects.append(f"{rel}:{lineno}")
+            prev_stripped = stripped
+
+        # Track files with stored connects but no disconnect
+        if file_stored_connects and not file_has_disconnect:
+            stored_no_disconnect_files.append((rel, file_stored_connects))
+
+    # Bare connects always FAIL — can't disconnect what you never stored
+    if bare_connects:
+        count = len(bare_connects)
+        locs = ', '.join(bare_connects[:5])
+        suffix = f' (and {count - 5} more)' if count > 5 else ''
+        result("FAIL", "lifecycle/dbus-signal-leak",
+               f"{count} bare proxy.connectSignal() without stored ID: "
+               f"{locs}{suffix}")
+
+    # Stored connects in files without any disconnectSignal → advisory
+    if stored_no_disconnect_files:
+        all_locs = []
+        for _rel, locs in stored_no_disconnect_files:
+            all_locs.extend(locs)
+        count = len(all_locs)
+        loc_str = ', '.join(all_locs[:5])
+        suffix = f' (and {count - 5} more)' if count > 5 else ''
+        result("WARN", "lifecycle/dbus-signal-leak",
+               f"{count} stored connectSignal() ID(s) without "
+               f"disconnectSignal() in same file: {loc_str}{suffix}")
+
+
+def check_settings_cleanup(ext_dir):
+    """Detect getSettings() without cleanup in disable()."""
+    ext_file = os.path.join(ext_dir, 'extension.js')
+    if not os.path.isfile(ext_file):
+        return
+
+    content = read_file(ext_file)
+    clean = strip_comments(content)
+
+    # Check for this._settings = this.getSettings() or similar
+    settings_assign = re.findall(
+        r'this\.(_\w+)\s*=\s*(?:this\.getSettings|new\s+Gio\.Settings)\s*\(', clean)
+    if not settings_assign:
+        result("PASS", "lifecycle/settings-cleanup", "No settings objects tracked")
+        return
+
+    leaked = []
+    for name in settings_assign:
+        null_pat = rf'this\.{re.escape(name)}\s*=\s*null'
+        if not re.search(null_pat, clean):
+            leaked.append(name)
+
+    if leaked:
+        result("WARN", "lifecycle/settings-cleanup",
+               f"Settings object(s) not nulled in disable(): {', '.join(leaked)}")
+    else:
+        result("PASS", "lifecycle/settings-cleanup",
+               f"All settings objects properly cleaned up")
+
+
+def check_module_scope_state(ext_dir):
+    """R-LIFE-26: Module-scope Map/Set not cleared in disable()."""
+    files = find_js_files(ext_dir, exclude_prefs=True)
+    if not files:
+        return
+
+    files = [f for f in files if not _skip_non_lifecycle(f, ext_dir)]
+
+    MODULE_STATE_RE = re.compile(
+        r'(?:const|let|var)\s+(\w+)\s*=\s*new\s+(Map|Set)\s*\(')
+
+    found = []
+    for filepath in files:
+        content = read_file(filepath)
+        clean = strip_comments(content)
+        lines = clean.split('\n')
+        rel = os.path.relpath(filepath, ext_dir)
+
+        # Track brace depth to find module-scope lines
+        depth = 0
+        for lineno, line in enumerate(lines, 1):
+            if depth == 0:
+                m = MODULE_STATE_RE.search(line)
+                if m:
+                    found.append((rel, lineno, m.group(1), m.group(2)))
+            depth += line.count('{') - line.count('}')
+            if depth < 0:
+                depth = 0
+
+    if not found:
+        result("PASS", "lifecycle/module-scope-state",
+               "No uncleared module-scope Map/Set found")
+        return
+
+    # Extract disable() + destroy() bodies from all files for cleanup check
+    cleanup_body = ''
+    for filepath in files:
+        content = strip_comments(read_file(filepath))
+        for method_pat in [r'\bdisable\s*\(\s*\)\s*\{', r'\bdestroy\s*\(\s*\)\s*\{']:
+            for m_method in re.finditer(method_pat, content):
+                start = m_method.end()
+                d = 1
+                pos = start
+                while pos < len(content) and d > 0:
+                    if content[pos] == '{':
+                        d += 1
+                    elif content[pos] == '}':
+                        d -= 1
+                    pos += 1
+                cleanup_body += content[start:pos] + '\n'
+
+    leaked = []
+    for rel, lineno, varname, typ in found:
+        clear_pat = rf'\b{re.escape(varname)}\.clear\s*\('
+        if not re.search(clear_pat, cleanup_body):
+            leaked.append((rel, lineno, varname, typ))
+
+    if leaked:
+        for rel, lineno, varname, typ in leaked:
+            result("WARN", "lifecycle/module-scope-state",
+                   f"{rel}:{lineno}: module-scope {typ} '{varname}' not cleared "
+                   f"in disable()|fix:Add {varname}.clear() to disable()")
+    else:
+        result("PASS", "lifecycle/module-scope-state",
+               "All module-scope Map/Set properly cleared")
+
+
+def check_module_scope_prototype(ext_dir):
+    """R-LIFE-27: Module-scope prototype mutation detection."""
+    files = find_js_files(ext_dir, exclude_prefs=True)
+    if not files:
+        return
+
+    files = [f for f in files if not _skip_non_lifecycle(f, ext_dir)]
+
+    PROTO_ASSIGN = re.compile(r'([\w.]+\.prototype\.\w+)\s*=(?!=)')
+    PROTO_OBJ_ASSIGN = re.compile(
+        r'Object\.assign\s*\(\s*([\w.]+\.prototype)')
+    # Indirect mutation: .prototype passed as function argument
+    PROTO_ARG = re.compile(r'([\w.]+\w)\s*\(\s*([\w.]+\.prototype)\b')
+    # Safe patterns that mention .prototype but aren't mutations
+    PROTO_SAFE = re.compile(
+        r'===|!==|\binstanceof\b|\bObject\.create\b'
+        r'|\bObject\.getPrototypeOf\b|Gio\._promisify')
+
+    found = []
+    seen = set()
+    for filepath in files:
+        content = read_file(filepath)
+        clean = strip_comments(content)
+        lines = clean.split('\n')
+        rel = os.path.relpath(filepath, ext_dir)
+
+        depth = 0
+        for lineno, line in enumerate(lines, 1):
+            if depth == 0:
+                stripped = line.strip()
+                if not stripped or stripped.startswith('import '):
+                    depth += line.count('{') - line.count('}')
+                    if depth < 0:
+                        depth = 0
+                    continue
+
+                m = PROTO_ASSIGN.search(line)
+                if m:
+                    key = (rel, m.group(1))
+                    if key not in seen:
+                        seen.add(key)
+                        found.append((rel, lineno, m.group(1)))
+                elif (m := PROTO_OBJ_ASSIGN.search(line)):
+                    label = f"Object.assign({m.group(1)}, ...)"
+                    key = (rel, label)
+                    if key not in seen:
+                        seen.add(key)
+                        found.append((rel, lineno, label))
+                elif (m := PROTO_ARG.search(line)) and not PROTO_SAFE.search(line):
+                    label = f"{m.group(1)}({m.group(2)})"
+                    key = (rel, label)
+                    if key not in seen:
+                        seen.add(key)
+                        found.append((rel, lineno, label))
+
+            depth += line.count('{') - line.count('}')
+            if depth < 0:
+                depth = 0
+
+    if found:
+        for rel, lineno, expr in found:
+            result("WARN", "lifecycle/module-scope-prototype",
+                   f"{rel}:{lineno}: {expr} — prototype mutation at module "
+                   f"scope persists after disable()|fix:Move into enable() "
+                   f"and restore original in disable()")
+    else:
+        result("PASS", "lifecycle/module-scope-prototype",
+               "No module-scope prototype mutations found")
+
+
+def main():
+    if len(sys.argv) < 2:
+        result("FAIL", "lifecycle/args", "No extension directory provided")
+        sys.exit(1)
+
+    ext_dir = os.path.realpath(sys.argv[1])
+
+    check_enable_disable(ext_dir)
+    check_default_export(ext_dir)
+    check_signal_balance(ext_dir)
+    check_untracked_timeouts(ext_dir)
+    check_timeout_removal_in_disable(ext_dir)
+    check_connect_object_migration(ext_dir)
+    check_async_destroyed_guard(ext_dir)
+    check_timeout_return_value(ext_dir)
+    check_keybinding_cleanup(ext_dir)
+    check_dbus_proxy_lifecycle(ext_dir)
+    check_file_monitor_lifecycle(ext_dir)
+    check_injection_manager(ext_dir)
+    check_lockscreen_signals(ext_dir)
+    check_selective_disable(ext_dir)
+    check_unlock_dialog_comment(ext_dir)
+    check_clipboard_keybinding(ext_dir)
+    check_pkexec_user_writable(ext_dir)
+    check_dbus_export_lifecycle(ext_dir)
+    check_bus_name_lifecycle(ext_dir)
+    check_timeout_reassignment(ext_dir)
+    check_subprocess_cancellation(ext_dir)
+    check_clipboard_network(ext_dir)
+    check_soup_session_abort(ext_dir)
+    check_destroy_then_null(ext_dir)
+    check_destroy_without_call(ext_dir)
+    check_widget_lifecycle(ext_dir)
+    check_stage_actor_lifecycle(ext_dir)
+    check_message_tray_lifecycle(ext_dir)
+    check_gsettings_signal_leak(ext_dir)
+    check_dbus_signal_leak(ext_dir)
+    check_settings_cleanup(ext_dir)
+    check_module_scope_state(ext_dir)
+    check_module_scope_prototype(ext_dir)
+
+
+if __name__ == '__main__':
+    main()

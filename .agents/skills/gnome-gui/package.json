@@ -1,0 +1,21 @@
+{
+  "name": "gnome-gui-spec",
+  "version": "2.0.0",
+  "description": "Build, audit, and improve GNOME GTK4/libadwaita apps with AI agents: design tokens, component library, 21 pattern skills, HIG mirror, 34 app audits, and lint scripts",
+  "keywords": [
+    "pi-package",
+    "gnome",
+    "gtk",
+    "libadwaita",
+    "gui",
+    "design-system"
+  ],
+  "author": "hanthor",
+  "license": "Apache-2.0",
+  "repository": "github.com/hanthor/gnome-gui-spec",
+  "pi": {
+    "skills": [
+      "./skills"
+    ]
+  }
+}

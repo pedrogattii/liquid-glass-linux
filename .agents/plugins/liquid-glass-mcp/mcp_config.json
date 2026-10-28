@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "context7": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@upstash/context7-mcp"
+      ]
+    },
+    "graphify": {
+      "command": "/home/pedrogatti/.local/bin/graphify-mcp",
+      "args": [
+        "graphify-out/graph.json"
+      ]
+    }
+  }
+}

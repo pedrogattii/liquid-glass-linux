@@ -1,0 +1,175 @@
+#!/usr/bin/env bash
+# check-imports.sh — Validate import segregation between extension and prefs contexts.
+#
+# Usage: check-imports.sh EXTENSION_DIR
+#
+# The rule:
+#   - Extension runtime code (extension.js, lib/**/*.js) must NOT import GTK libraries.
+#   - Prefs code (prefs.js) must NOT import Shell runtime libraries.
+#
+# Output: PIPE-delimited lines: STATUS|check-name|detail
+
+set -euo pipefail
+
+EXT_DIR="$(cd "${1:-.}" && pwd)"
+
+violations=0
+
+# ---------------------------------------------------------------------------
+# Helper functions for import graph traversal
+# ---------------------------------------------------------------------------
+
+resolve_import() {
+    local dir="$1" import_path="$2"
+    local resolved
+    resolved="$(cd "$dir" && realpath -m "$import_path" 2>/dev/null)" || return
+    if [[ -f "$resolved" ]]; then
+        echo "$resolved"
+    elif [[ -f "${resolved}.js" ]]; then
+        echo "${resolved}.js"
+    fi
+}
+
+get_local_imports() {
+    local file="$1"
+    local dir
+    dir="$(dirname "$file")"
+    grep -E "from\s+['\"]\.\.?/" "$file" 2>/dev/null | \
+        sed -E "s/.*from\s+['\"]([^'\"]+)['\"].*/\1/" | \
+        while IFS= read -r path; do
+            resolve_import "$dir" "$path"
+        done
+}
+
+# ---------------------------------------------------------------------------
+# Check extension runtime code for banned GTK imports
+# ---------------------------------------------------------------------------
+
+# Banned in extension runtime: gi://Gtk, gi://Gdk, gi://Adw
+# Note: gi://GdkPixbuf is excluded via grep -v (standalone image library, not a GTK widget toolkit)
+gtk_pattern="gi://Gtk|gi://Gdk|gi://Adw"
+
+# Build list of runtime JS files reachable from extension.js via import graph.
+# Files in lib/ that are only imported by prefs.js should not be flagged.
+runtime_files=()
+if [[ -f "$EXT_DIR/extension.js" ]]; then
+    runtime_files+=("$EXT_DIR/extension.js")
+
+    # BFS from extension.js to find all extension-reachable modules
+    declare -A ext_visited
+    ext_queue=("$EXT_DIR/extension.js")
+    ext_visited["$EXT_DIR/extension.js"]=1
+    ext_idx=0
+
+    while [[ $ext_idx -lt ${#ext_queue[@]} ]]; do
+        current="${ext_queue[$ext_idx]}"
+        ext_idx=$((ext_idx + 1))
+
+        while IFS= read -r neighbor; do
+            [[ -z "$neighbor" ]] && continue
+            if [[ -z "${ext_visited[$neighbor]:-}" ]]; then
+                ext_visited["$neighbor"]=1
+                ext_queue+=("$neighbor")
+                runtime_files+=("$neighbor")
+            fi
+        done < <(get_local_imports "$current")
+    done
+fi
+
+for f in "${runtime_files[@]}"; do
+    while IFS= read -r match; do
+        rel_path="${f#"$EXT_DIR/"}"
+        echo "FAIL|imports/no-gtk-in-extension|$rel_path: $match"
+        violations=$((violations + 1))
+    done < <(grep -nE "$gtk_pattern" "$f" 2>/dev/null \
+        | grep -vE "gi://GdkPixbuf" \
+        | grep -E "(from\s+['\"]|import\s*\()" || true)
+done
+
+# ---------------------------------------------------------------------------
+# Check prefs code for banned Shell runtime imports
+# ---------------------------------------------------------------------------
+
+# Banned in prefs: gi://Clutter, gi://Meta, gi://St, gi://Shell
+shell_pattern="gi://Clutter|gi://Meta|gi://St|gi://Shell"
+
+if [[ -f "$EXT_DIR/prefs.js" ]]; then
+    while IFS= read -r match; do
+        echo "FAIL|imports/no-shell-in-prefs|prefs.js: $match"
+        violations=$((violations + 1))
+    done < <(grep -nE "$shell_pattern" "$EXT_DIR/prefs.js" 2>/dev/null || true)
+fi
+
+# ---------------------------------------------------------------------------
+# Check resource path case: prefs uses /Shell/Extensions/, extension uses /shell/
+# Standard framework imports (resource:///org/gnome/shell/extensions/prefs.js,
+# resource:///org/gnome/shell/extensions/extension.js) are allowed everywhere.
+# Only flag the mixed-case typo: /shell/Extensions/ (lowercase s, capital E).
+# ---------------------------------------------------------------------------
+
+# prefs.js must NOT use resource:///org/gnome/shell/Extensions/ (mixed case) —
+# standard framework imports like resource:///org/gnome/shell/extensions/prefs.js are fine.
+if [[ -f "$EXT_DIR/prefs.js" ]]; then
+    while IFS= read -r match; do
+        echo "FAIL|imports/resource-path-case|prefs.js: wrong resource path case — use resource:///org/gnome/Shell/Extensions/ (capitalized Shell)"
+        violations=$((violations + 1))
+        break  # Report once
+    done < <(grep -nE 'resource:///org/gnome/shell/Extensions/' "$EXT_DIR/prefs.js" 2>/dev/null || true)
+fi
+
+# extension.js must NOT use resource:///org/gnome/Shell/Extensions/ — that's the prefs context
+if [[ -f "$EXT_DIR/extension.js" ]]; then
+    while IFS= read -r match; do
+        echo "FAIL|imports/resource-path-case|extension.js: wrong resource path case — use resource:///org/gnome/shell/ (lowercase)"
+        violations=$((violations + 1))
+        break  # Report once
+    done < <(grep -nE 'resource:///org/gnome/Shell/Extensions/' "$EXT_DIR/extension.js" 2>/dev/null || true)
+fi
+
+# ---------------------------------------------------------------------------
+# Shared module dependency graph — transitive import segregation (GAP-015)
+# Files reachable from prefs.js must not import Shell runtime libraries,
+# even if they live in lib/ and are also used by extension.js.
+# ---------------------------------------------------------------------------
+
+if [[ -f "$EXT_DIR/prefs.js" ]]; then
+    # BFS from prefs.js to find all prefs-reachable modules
+    declare -A prefs_visited
+    prefs_queue=("$EXT_DIR/prefs.js")
+    prefs_visited["$EXT_DIR/prefs.js"]=1
+    prefs_idx=0
+
+    while [[ $prefs_idx -lt ${#prefs_queue[@]} ]]; do
+        current="${prefs_queue[$prefs_idx]}"
+        prefs_idx=$((prefs_idx + 1))
+
+        while IFS= read -r neighbor; do
+            [[ -z "$neighbor" ]] && continue
+            if [[ -z "${prefs_visited[$neighbor]:-}" ]]; then
+                prefs_visited["$neighbor"]=1
+                prefs_queue+=("$neighbor")
+            fi
+        done < <(get_local_imports "$current")
+    done
+
+    # Check prefs-reachable modules (excluding prefs.js itself) for Shell imports.
+    # Only flag actual import statements (from '...' or import('...')) — not gi:// strings
+    # passed as arguments to guard functions like importInShellOnly('gi://Clutter').
+    for f in "${!prefs_visited[@]}"; do
+        [[ "$f" == "$EXT_DIR/prefs.js" ]] && continue
+        rel_path="${f#"$EXT_DIR/"}"
+        while IFS= read -r match; do
+            echo "FAIL|imports/shared-module-shell|$rel_path: Shell runtime import in module reachable from prefs.js: $match"
+            violations=$((violations + 1))
+        done < <(grep -nE "$shell_pattern" "$f" 2>/dev/null \
+            | grep -E "(from\s+['\"]|import\s*\()" || true)
+    done
+fi
+
+# ---------------------------------------------------------------------------
+# Result
+# ---------------------------------------------------------------------------
+
+if [[ $violations -eq 0 ]]; then
+    echo "PASS|imports/segregation|Import contexts are properly segregated"
+fi

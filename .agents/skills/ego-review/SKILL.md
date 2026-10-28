@@ -1,0 +1,309 @@
+---
+name: ego-review
+description: >-
+  Perform a manual code review of a GNOME Shell extension simulating what an
+  EGO reviewer checks. Analyzes lifecycle correctness, signal disconnection,
+  resource cleanup, async safety, security patterns, and code quality. Use
+  before EGO submission, when reviewing GNOME extension code, or for
+  pre-submission review.
+---
+
+# ego-review
+
+Simulated EGO reviewer code review for GNOME Shell extensions.
+
+This skill guides a thorough manual code review that covers everything an
+extensions.gnome.org reviewer checks, plus common rejection patterns learned
+from real submissions.
+
+## Reviewer Context
+
+Understanding the real EGO review process helps calibrate review severity:
+
+- **Primary reviewer** processes 15,000+ lines of code per day across many extensions
+- **Review priority order**: Security → Stability (resource leaks) → Code readability → Lifecycle correctness → API correctness → Metadata → AI pattern detection
+- **Lifecycle cleanup is the #1 rejection cause** — not security, not metadata
+- **AI slop triggers deeper scrutiny**: When a reviewer spots one AI-generated pattern, they examine the entire extension more carefully. A clean extension with one `pkexec` usage gets more leeway than one with `typeof super.destroy === 'function'` guards everywhere
+- **The domino effect**: Bad patterns in published extensions get copied. Reviewers are stricter on patterns they've seen spread (excessive try-catch, empty catches, TypeScript JSDoc)
+- **Developer understanding matters**: When asked to explain code, developers who respond with more AI-generated text are immediately flagged. Extensions where the developer clearly understands the code get more benefit of the doubt
+
+### Phase 0: Automated Baseline
+
+1. Run ego-lint on the extension directory (invoke the ego-lint skill)
+2. Capture all FAIL/WARN/PASS results
+3. For each FAIL/WARN, note the check name — Phases 2-5 should NOT re-report
+   issues already caught by ego-lint (avoid duplication)
+4. Focus manual review on issues ego-lint CANNOT detect (semantic, cross-file,
+   design-level)
+
+### Phase 1: Discovery
+
+1. Read `metadata.json` -- note UUID, shell-version, settings-schema, any session-modes
+2. Glob all `.js` files -- identify extension.js, prefs.js, lib/ modules
+3. Check for helper scripts, polkit rules, or other resources
+4. Note the extension's purpose and complexity level
+
+### Phase 1b: Licensing & Legal
+
+Using [licensing-checklist.md](references/licensing-checklist.md):
+
+1. Verify LICENSE/COPYING file exists and is GPL-compatible
+2. Check for code that appears borrowed from other extensions (attribution needed)
+3. Verify no copyrighted/trademarked content without permission
+4. Check extension name, description, and UI text for CoC compliance
+
+### Phase 2: Lifecycle Audit
+
+Using [lifecycle-checklist.md](references/lifecycle-checklist.md):
+
+1. Read `extension.js` — verify enable/disable symmetry
+2. Check constructor constraints (no resource allocation in constructor)
+3. **Reference the resource-tracking findings from Phase 0 lint.** ego-lint
+   already ran `build-resource-graph.py` and `check-resources.py`. Use the
+   `resource-tracking/*` findings from the lint results as the starting point.
+   Do NOT re-run `build-resource-graph.py`.
+4. **For each resource-tracking FAIL/WARN from lint**: read the cited file:line
+   to verify it's a true leak. Classify as: TRUE LEAK (blocking) | JUSTIFIED
+   (note why) | FALSE POSITIVE (skip). For true leaks, include the fix in the
+   report.
+5. **For ownership chains**: if lint reports orphans, verify parent calls
+   child's `destroy()` in its own `disable()`/`destroy()` and that destroy
+   order is reverse of creation. If lint reports 0 orphans, do a brief
+   spot-check of 1-2 ownership chains to verify graph accuracy, but do not
+   perform a full ownership walk.
+6. **Resource tracking table**: if the report needs a resource tracking table,
+   build it from the lint JSON's `resource-tracking/*` findings rather than
+   re-running `build-resource-graph.py --format=table`.
+
+7. **If the graph reports 0 orphans and complete ownership chains**: abbreviate
+   this phase — focus on async guards and cleanup ordering below
+8. **Async guard verification**: For every `await` in enable-path code, verify
+   a `_destroyed` check follows the resume point
+9. Verify cleanup ordering (reverse order of creation)
+10. Check for _destroyed flag pattern in async operations
+11. Verify session mode handling if applicable
+
+### Phase 3: Signal & Resource Audit
+
+1. **Abbreviate this phase** if Phase 2 found 0 orphans AND Phase 0 lint has
+   no `resource-tracking/*` or `lifecycle/*` FAILs/WARNs. In this case, do a
+   single spot-check: pick 1 resource entry from the graph and verify by
+   reading the cited file:line that create/destroy are correctly paired.
+2. **Otherwise**, for each resource-tracking or lifecycle FAIL/WARN from lint,
+   verify by reading the cited code — focus on issues ego-lint cannot judge
+   semantically (e.g., whether a cleanup pattern is architecturally correct).
+3. **Check for resource types lint still misses**: custom cleanup methods
+   (`_cleanup()`, `_teardown()`, `_clear()`) not recognized by the resource
+   graph. GSettings signal leaks and D-Bus connectSignal leaks are now
+   automated — do not re-check manually.
+4. **Only do a full manual grep** if lint reported orphans AND you suspect the
+   graph missed resources after the spot-checks above.
+
+### Phase 4: Security Review
+
+Using [security-checklist.md](references/security-checklist.md):
+
+1. Check subprocess/command execution patterns
+2. Verify pkexec usage and helper script input validation
+3. Check clipboard operations and disclosure
+4. Check for network access
+5. Verify file path handling (no traversal)
+6. Check for telemetry/analytics patterns (banned by EGO)
+7. Check clipboard access and disclosure requirements
+8. Check for extension system interference (ExtensionManager usage)
+
+**Reviewer perspective notes:**
+- When a reviewer sees `pkexec`, they immediately check the helper script for input validation
+- When a reviewer sees network access, they check if it's disclosed in the description
+- When a reviewer sees clipboard access, they check if the user initiated it
+
+### Phase 4b: Accessibility (if extension adds UI)
+
+Apply [accessibility-checklist.md](references/accessibility-checklist.md):
+
+1. Identify all custom UI elements added by the extension
+2. Check A1-A7 for each element
+3. Note: standard St.Button, PopupMenu, QuickToggle have built-in accessibility — only flag custom widgets
+
+### Phase 5: Code Quality
+
+Using [code-quality-checklist.md](references/code-quality-checklist.md):
+
+1. Check for deprecated modules and APIs
+2. Check for web API usage (setTimeout, fetch, etc.)
+3. Look for AI code artifacts (imaginary APIs, hallucinated imports)
+4. Check for excessive logging
+5. Verify private API usage is documented
+6. Check error handling patterns
+7. **Hallucinated API cross-reference**: Verify that every API method called actually exists in the declared `shell-version` range. Common hallucinations: `Meta.Screen`, `St.Button.set_label()`, `GLib.source_remove()`, `Clutter.Actor.show_all()`
+8. **GObject pattern verification**: Check that `registerClass` calls have `GTypeName`, that `destroy()` chains to `super.destroy()`, that GObject properties emit `notify`
+9. **Prefs.js specific checks**: Verify `fillPreferencesWindow()` exists, GTK4/Adwaita patterns used correctly, no deprecated GTK3 patterns, no Shell imports
+10. Check for `var` declarations (should use const/let)
+11. Check import ordering (GI → resource → extension)
+12. Check for `console.log()` (banned — only debug/warn/error allowed)
+
+**Reviewer perspective notes:**
+- When a reviewer sees `console.log()`, they think "developer forgot to clean up debug logging"
+- When a reviewer sees module-level `let`, they think "will this persist across enable/disable cycles?"
+- When a reviewer sees `try { super.destroy() } catch`, they think "AI-generated code"
+
+### Phase 5a: AI Pattern Analysis
+
+Using [ai-slop-checklist.md](references/ai-slop-checklist.md) (46-item checklist):
+
+1. Split the 46 items by automation status:
+   - **1a. Automated items (24 of 46):** Items 1-2, 4-5, 8, 11-12, 14-15,
+     18-26, 28, 34, 36, 41-42, 44. Pull the trigger count directly from
+     Phase 0 lint — do NOT re-read descriptions or re-search the code.
+   - **1b. Manual-only items (15 of 46):** Items 3, 7, 9, 13, 27, 31-32,
+     35, 37-40, 43, 45-46. Search extension source for each pattern —
+     these require semantic judgment ego-lint cannot provide.
+   - **1c. Partial items (7 of 46):** Items 6, 10, 16-17, 29-30, 33. Use
+     ego-lint's result as a starting point, then apply manual judgment for
+     aspects ego-lint cannot cover.
+   - **1d. Combine:** automated triggered count + manual triggered count +
+     partial triggered count = total score.
+2. Record whether it triggers, with file:line references
+3. Note whether the pattern is justified by context (check "NOT a signal" exceptions)
+4. Count JS files to determine threshold tier:
+   - **<10 files**: standard thresholds (4-6 BLOCKING)
+   - **10+ files**: size-adjusted thresholds (5-8 BLOCKING)
+5. Check ego-lint's `quality/code-provenance` score — if provenance-score >= 3,
+   apply +2 credit to BLOCKING threshold
+6. Include count, category breakdown, threshold used, and assessment in the report
+7. When score reaches BLOCKING, provide specific file:line citations for each
+   triggered item so the developer has an actionable fix list
+
+#### AI Defense Report (for extensions with triggered AI patterns)
+
+For each triggered AI pattern, include a **Defense** column in the analysis:
+
+| # | Pattern | Triggered? | File:Line | Defense |
+|---|---------|-----------|-----------|---------|
+| 1 | Excessive try-catch | Yes | ext.js:45 | All try-catch wraps D-Bus calls (justified) |
+| 8 | TypeScript JSDoc | Yes | lib/api.js:12 | Only on 2 exported functions (below threshold) |
+
+**Defense indicators to check for each triggered item:**
+- Is the pattern contextually justified? (try-catch around D-Bus, JSDoc on shared API)
+- Does the code show domain knowledge that contradicts AI generation?
+- Is there a consistent personal style across the file?
+- Does the provenance score suggest genuine authorship?
+
+If **more triggered items have valid defenses than not**, downgrade the verdict
+by one tier (BLOCKING → ADVISORY, ADVISORY → note only).
+
+## Output Format
+
+```
+## EGO Review Report — [Extension Name] v[version]
+
+### Verdict: [LIKELY APPROVED | NEEDS REVISION | LIKELY REJECTED]
+
+**Rejection Risk**: [LOW | MEDIUM | HIGH | VERY HIGH]
+
+---
+
+### Section 1: Blocking Issues (Must Fix)
+
+#### [B1] Issue title (category)
+**File**: path/to/file.js:line
+**What**: Description of the issue
+**Why reviewers reject this**: Explanation with reviewer perspective
+**Fix**:
+```js
+// BEFORE
+old code
+
+// AFTER
+fixed code
+```
+
+---
+
+### Section 2: Justification Required
+
+Items that are acceptable IF properly documented:
+
+#### [J1] pkexec usage
+**File**: path/to/file.js:line
+**Status**: Requires reviewer justification
+**Template**: [Include pkexec justification template from security checklist]
+
+---
+
+### Section 3: Advisory Issues (May Cause Questions)
+
+#### [A1] Issue title
+**File**: path/to/file.js:line
+**What**: Description
+**Reviewer perspective**: What the reviewer thinks when they see this
+**Suggestion**: How to fix
+
+---
+
+### Section 4: Automated Check Summary (from ego-lint)
+
+| Category | Pass | Fail | Warn |
+|----------|------|------|------|
+| Metadata | N | N | N |
+| Security | N | N | N |
+| Lifecycle | N | N | N |
+| Quality | N | N | N |
+
+---
+
+### Section 5: AI Pattern Analysis
+
+**Score**: N/46 triggered — [ADVISORY | BLOCKING]
+**Triggered items**: list with file:line
+**Assessment**: interpretation
+
+---
+
+### Section 6: Submission Readiness
+
+**Ready to submit?** [YES | NO] — N blocking issues remain
+
+**Action items (priority order)**:
+1. [ ] First thing to fix
+2. [ ] Second thing to fix
+```
+
+## Rejection-Risk Scoring Model
+
+Calculate based on findings:
+
+| Finding | Risk Points |
+|---------|-------------|
+| Each BLOCKING lifecycle issue | +3 |
+| Each BLOCKING security issue | +4 |
+| Each BLOCKING API hallucination | +5 (indicates AI) |
+| AI slop score >= 3 | +5 |
+| AI slop score >= 6 | +10 |
+| Each ADVISORY issue | +1 |
+| Justified advisory (with docs) | +0 |
+
+**Verdict thresholds:**
+- 0-2 points: **LIKELY APPROVED** — minor or no issues
+- 3-6 points: **NEEDS REVISION** — fixable, resubmit after changes
+- 7-12 points: **LIKELY REJECTED** — significant issues
+- 13+ points: **LIKELY REJECTED** — fundamental problems or AI-generated
+
+**Rough correspondence with ego-simulate scores:**
+
+| ego-review risk | ego-simulate score | Interpretation |
+|-----------------|-------------------|----------------|
+| 0-2 | 0-4 | Likely to pass |
+| 3-6 | 5-9 | May need revision |
+| 7+ | 10+ | Likely rejected |
+
+The scales use different inputs (ego-review: finding category points;
+ego-simulate: taxonomy weights), so this mapping is approximate. When both
+tools are run, prefer ego-review's assessment as the authoritative verdict.
+
+## When to Use
+
+- Before submitting to extensions.gnome.org
+- After making significant changes to an extension
+- When reviewing someone else's GNOME extension code
+- As a learning tool for new extension developers

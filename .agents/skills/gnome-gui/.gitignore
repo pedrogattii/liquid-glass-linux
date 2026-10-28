@@ -1,0 +1,8 @@
+sources/
+hig/
+gnome-*/
+loupe/
+nautilus/
+
+# Allow the extracted HIG markdown references
+!reference/hig/

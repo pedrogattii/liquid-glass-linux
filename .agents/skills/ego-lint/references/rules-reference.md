@@ -1,0 +1,2818 @@
+# EGO Lint Rules Reference
+
+Complete catalog of rules checked by the ego-lint skill. Each rule includes its
+severity, the script that checks it, and guidance on how to fix violations.
+
+## Severity Levels
+
+- **blocking** — Must be fixed before EGO submission. The extension will be rejected.
+- **advisory** — Should be fixed. Reviewers may flag these or request changes.
+- **info** — Informational. No action required.
+
+---
+
+## Metadata (R-META)
+
+Rules for `metadata.json` validity and EGO requirements.
+
+### R-META-01: UUID must be present
+- **Severity**: blocking
+- **Checked by**: check-metadata.py
+- **Rule**: `metadata.json` must contain a `uuid` field.
+- **Rationale**: The UUID is the primary identifier for the extension on EGO and in GNOME Shell. Without it, the extension cannot be loaded.
+- **Fix**: Add a `uuid` field to `metadata.json`. Format: `extension-name@your-domain`.
+
+### R-META-02: UUID must match directory name
+- **Severity**: blocking
+- **Checked by**: check-metadata.py
+- **Rule**: The `uuid` value in `metadata.json` must exactly match the extension directory name.
+- **Rationale**: GNOME Shell locates extensions by directory name and validates it against the metadata UUID. A mismatch prevents the extension from loading.
+- **Fix**: Rename the directory to match the UUID, or update the UUID to match the directory name.
+
+### R-META-03: UUID format (alphanumeric + . _ - @)
+- **Severity**: blocking
+- **Checked by**: check-metadata.py
+- **Rule**: The UUID must contain only alphanumeric characters, periods, underscores, hyphens, and the `@` symbol.
+- **Rationale**: GNOME Shell enforces this character set. Invalid characters will prevent installation.
+- **Fix**: Remove any characters not matching `[a-zA-Z0-9._@-]` from the UUID.
+
+### R-META-04: No @gnome.org namespace
+- **Severity**: blocking
+- **Checked by**: check-metadata.py
+- **Rule**: The UUID must not use the `@gnome.org` domain suffix.
+- **Rationale**: The `@gnome.org` namespace is reserved for official GNOME extensions. Using it for third-party extensions will cause rejection.
+- **Fix**: Change the domain portion of the UUID to your own domain (e.g., `my-extension@example.com`).
+
+### R-META-05: name field required
+- **Severity**: blocking
+- **Checked by**: check-metadata.py
+- **Rule**: `metadata.json` must contain a `name` field with a non-empty string value.
+- **Rationale**: The name is displayed on EGO and in GNOME Extensions app. It is a required field for submission.
+- **Fix**: Add `"name": "Your Extension Name"` to `metadata.json`.
+
+### R-META-06: description field required
+- **Severity**: blocking
+- **Checked by**: check-metadata.py
+- **Rule**: `metadata.json` must contain a `description` field with a non-empty string value.
+- **Rationale**: The description appears on the EGO listing page. It is a required field for submission.
+- **Fix**: Add `"description": "Brief description of what the extension does"` to `metadata.json`.
+
+### R-META-07: shell-version must be array
+- **Severity**: blocking
+- **Checked by**: check-metadata.py
+- **Rule**: The `shell-version` field must be a JSON array of version strings.
+- **Rationale**: GNOME Shell uses this array to determine compatibility. A non-array value will fail validation.
+- **Fix**: Use an array format: `"shell-version": ["47", "48"]`.
+
+### R-META-08: shell-version should include current stable (48)
+- **Severity**: advisory
+- **Checked by**: check-metadata.py
+- **Rule**: The `shell-version` array should include the current stable GNOME Shell version (`"48"`).
+- **Rationale**: Extensions not targeting the current stable release have limited audience and may be deprioritized in review. Reviewers may ask why the current version is missing.
+- **Fix**: Add `"48"` to the `shell-version` array.
+
+### R-META-09: No session-modes ["user"]
+- **Severity**: blocking
+- **Checked by**: check-metadata.py
+- **Rule**: If `session-modes` is present and contains only `["user"]`, it must be removed.
+- **Rationale**: `["user"]` is the default value. Including it explicitly is redundant and a hard reject per EGO review guidelines.
+- **Fix**: Remove the `session-modes` key from `metadata.json` entirely. Only include it if you need `"unlock-dialog"` or other non-default modes.
+
+### R-META-10: settings-schema prefix must be org.gnome.shell.extensions.*
+- **Severity**: blocking
+- **Checked by**: check-metadata.py
+- **Rule**: If `settings-schema` is declared, it must start with `org.gnome.shell.extensions.`.
+- **Rationale**: GNOME Shell's extension system expects GSettings schemas under this prefix. A different prefix will fail to load settings.
+- **Fix**: Rename the schema ID to `org.gnome.shell.extensions.your-extension-name`.
+
+### R-META-11: url field recommended for EGO listing
+- **Severity**: advisory
+- **Checked by**: manual review
+- **Rule**: `metadata.json` should include a `url` field pointing to the project homepage or repository.
+- **Rationale**: The URL is displayed on the EGO listing page. It helps users find documentation, report issues, and contribute. Reviewers expect it for established projects.
+- **Fix**: Add `"url": "https://github.com/your-username/your-extension"` to `metadata.json`.
+
+### R-META-12: description should disclose permissions
+- **Severity**: advisory
+- **Checked by**: manual review
+- **Rule**: If the extension uses clipboard access, network requests, or privilege escalation (pkexec), the description should mention this.
+- **Rationale**: EGO reviewers scrutinize extensions that use elevated permissions. Proactive disclosure builds trust and speeds up the review process.
+- **Fix**: Add a note to the description, e.g., "This extension uses pkexec to write battery thresholds via a helper script."
+
+---
+
+## Schema (R-SCHEMA)
+
+Rules for GSettings schema files.
+
+### R-SCHEMA-01: Schema file must exist if settings-schema declared
+- **Severity**: blocking
+- **Checked by**: check-schema.sh
+- **Rule**: If `metadata.json` declares a `settings-schema`, a corresponding `.gschema.xml` file must exist in the `schemas/` directory.
+- **Rationale**: GNOME Shell will attempt to load the schema at runtime. A missing file causes a hard error.
+- **Fix**: Create the schema file at `schemas/org.gnome.shell.extensions.your-extension.gschema.xml`.
+
+### R-SCHEMA-02: Schema ID must match metadata settings-schema
+- **Severity**: blocking
+- **Checked by**: check-schema.sh
+- **Rule**: The `id` attribute of the `<schema>` element must exactly match the `settings-schema` value in `metadata.json`.
+- **Rationale**: A mismatch means the extension will compile the schema but fail to find it at runtime, causing a GSettings error.
+- **Fix**: Ensure the `id="..."` in the schema XML matches the `settings-schema` value in `metadata.json` exactly.
+
+### R-SCHEMA-03: Schema path must start with /org/gnome/shell/extensions/
+- **Severity**: blocking
+- **Checked by**: check-schema.sh
+- **Rule**: The `path` attribute of the `<schema>` element must start with `/org/gnome/shell/extensions/`.
+- **Rationale**: GNOME Shell's extension settings loader expects schemas under this dconf path. A different path prefix will cause settings to be inaccessible.
+- **Fix**: Set the path to `/org/gnome/shell/extensions/your-extension-name/`.
+
+### R-SCHEMA-04: Schema must compile without errors
+- **Severity**: blocking
+- **Checked by**: check-schema.sh
+- **Rule**: Running `glib-compile-schemas` on the `schemas/` directory must succeed without errors.
+- **Rationale**: The compiled schema binary (`gschemas.compiled`) is what GNOME Shell actually reads. If compilation fails, the extension cannot load settings.
+- **Fix**: Fix XML syntax errors, missing closing tags, invalid key types, or invalid default values reported by the compiler.
+
+### R-SCHEMA-05: Schema filename should match ID
+- **Severity**: advisory
+- **Checked by**: check-schema.sh
+- **Rule**: The schema filename should match the schema ID (e.g., `org.gnome.shell.extensions.my-ext.gschema.xml` for schema ID `org.gnome.shell.extensions.my-ext`).
+- **Rationale**: While not strictly required, mismatched filenames cause confusion during review and maintenance. EGO reviewers may flag it.
+- **Fix**: Rename the schema file to match its ID.
+
+---
+
+## Imports (R-IMPORT)
+
+Rules for import segregation between extension runtime and preferences UI.
+
+### R-IMPORT-01: No gi://Gtk in extension runtime
+- **Severity**: blocking
+- **Checked by**: check-imports.sh
+- **Rule**: Files loaded during extension runtime (`extension.js` and its `lib/` imports) must not import `gi://Gtk`.
+- **Rationale**: GTK cannot be used in GNOME Shell's Clutter/Mutter environment. Importing it in extension runtime causes a conflict and will crash the shell or be rejected by reviewers.
+- **Fix**: Move GTK-dependent code to `prefs.js` or a file only imported by `prefs.js`.
+
+### R-IMPORT-02: No gi://Gdk in extension runtime
+- **Severity**: blocking
+- **Checked by**: check-imports.sh
+- **Rule**: Files loaded during extension runtime must not import `gi://Gdk`.
+- **Rationale**: GDK is part of the GTK stack and cannot coexist with GNOME Shell's display server. Same restriction as GTK.
+- **Fix**: Move GDK-dependent code to `prefs.js` or a prefs-only module.
+
+### R-IMPORT-03: No gi://Adw in extension runtime
+- **Severity**: blocking
+- **Checked by**: check-imports.sh
+- **Rule**: Files loaded during extension runtime must not import `gi://Adw`.
+- **Rationale**: Adwaita (libadwaita) depends on GTK4. Importing it in extension runtime triggers the GTK conflict.
+- **Fix**: Move Adwaita-dependent code to `prefs.js` or a prefs-only module.
+
+### R-IMPORT-04: No gi://Clutter in prefs
+- **Severity**: blocking
+- **Checked by**: check-imports.sh
+- **Rule**: `prefs.js` and its imports must not import `gi://Clutter`.
+- **Rationale**: Clutter is a GNOME Shell runtime library not available in the GTK preferences process. Importing it will cause an error when opening preferences.
+- **Fix**: Move Clutter-dependent code to `extension.js` or a `lib/` module only imported at runtime.
+
+### R-IMPORT-05: No gi://Meta in prefs
+- **Severity**: blocking
+- **Checked by**: check-imports.sh
+- **Rule**: `prefs.js` and its imports must not import `gi://Meta`.
+- **Rationale**: Mutter's Meta library is only available in GNOME Shell's process. It cannot be loaded in the preferences GTK process.
+- **Fix**: Move Meta-dependent code to `extension.js` or a runtime-only module.
+
+### R-IMPORT-06: No gi://St in prefs
+- **Severity**: blocking
+- **Checked by**: check-imports.sh
+- **Rule**: `prefs.js` and its imports must not import `gi://St`.
+- **Rationale**: St (Shell Toolkit) is GNOME Shell's UI library built on Clutter. It is not available in the GTK preferences process.
+- **Fix**: Move St-dependent code to `extension.js` or a runtime-only module.
+
+### R-IMPORT-07: No gi://Shell in prefs
+- **Severity**: blocking
+- **Checked by**: check-imports.sh
+- **Rule**: `prefs.js` and its imports must not import `gi://Shell`.
+- **Rationale**: The Shell library is only available within GNOME Shell's process. Importing it in preferences will fail.
+- **Fix**: Move Shell-dependent code to `extension.js` or a runtime-only module.
+
+---
+
+## Logging (R-LOG)
+
+Rules for logging practices in GNOME Shell extensions.
+
+### R-LOG-01: No console.log()
+- **Severity**: blocking
+- **Checked by**: ego-lint.sh
+- **Rule**: Extension code must not use `console.log()`.
+- **Rationale**: EGO reviewers reject extensions that use `console.log()` because it produces output at the default journal log level, cluttering the system log for all users. `console.debug()` is filtered out unless the user explicitly enables debug logging.
+- **Fix**: Replace `console.log(msg)` with `console.debug(msg)` for operational messages, or remove the call if it was for development debugging.
+
+### R-LOG-02: No log() global function
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: Extension code should not use the global `log()` function.
+- **Rationale**: The global `log()` function is a legacy GJS API. Modern extensions should use `console.debug()` or `console.error()` for structured logging.
+- **Fix**: Replace `log(msg)` with `console.debug(msg)`.
+- **Note**: Files in `service/` are excluded (standalone daemon processes have different logging conventions).
+- **Tested by**: `tests/fixtures/logging-patterns@test/`, `tests/fixtures/service-daemon@test/`
+
+### R-LOG-03: No print() for debugging
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: Extension code should not use `print()` or `printerr()` for logging.
+- **Rationale**: `print()` writes directly to stdout, which is not captured by the journal in typical GNOME Shell setups. It is a sign of leftover debug code.
+- **Fix**: Replace with `console.debug()` or remove entirely.
+- **Note**: Uses `skip-comments` — does not flag `print()`/`printerr()` inside `//` or `/* */` comments. Files in `resources/` and `service/` are excluded (standalone scripts, compiled output, daemon processes).
+- **Tested by**: `tests/fixtures/logging-patterns@test/`, `tests/fixtures/log-comment-skip@test/`, `tests/fixtures/log-resources-skip@test/`, `tests/fixtures/service-daemon@test/`
+
+### R-LOG-04: console.debug() is acceptable for operational messages
+- **Severity**: info
+- **Checked by**: reference only
+- **Rule**: `console.debug()` is the recommended way to log operational messages in GNOME Shell extensions.
+- **Rationale**: `console.debug()` output is filtered by default and only visible when users opt in to debug-level logging. This keeps the system journal clean while still providing diagnostic information when needed.
+- **Fix**: No action required. This is the correct practice.
+
+---
+
+## Deprecated APIs (R-DEPR)
+
+Rules for deprecated GJS/GNOME APIs that must not be used in modern extensions.
+
+### R-DEPR-01: No Mainloop import
+- **Severity**: blocking
+- **Checked by**: ego-lint.sh
+- **Rule**: Extension code must not import or use `Mainloop`.
+- **Rationale**: `Mainloop` is a deprecated GJS compatibility module. It was removed in recent GJS versions. Extensions using it will fail on current GNOME Shell.
+- **Fix**: Replace `Mainloop.timeout_add(ms, callback)` with `GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, callback)`. Replace `Mainloop.source_remove(id)` with `GLib.Source.remove(id)`.
+
+#### Example
+
+**Before** (violation):
+```javascript
+const Mainloop = imports.mainloop;
+
+enable() {
+    this._timeoutId = Mainloop.timeout_add(1000, () => {
+        this._refresh();
+        return true;
+    });
+}
+
+disable() {
+    Mainloop.source_remove(this._timeoutId);
+}
+```
+
+**After** (idiomatic):
+```javascript
+import GLib from 'gi://GLib';
+
+enable() {
+    this._timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1000, () => {
+        this._refresh();
+        return GLib.SOURCE_CONTINUE;
+    });
+}
+
+disable() {
+    GLib.Source.remove(this._timeoutId);
+    this._timeoutId = null;
+}
+```
+
+### R-DEPR-02: No Lang import
+- **Severity**: blocking
+- **Checked by**: ego-lint.sh
+- **Rule**: Extension code must not import or use `Lang`.
+- **Rationale**: `Lang` provided `Lang.Class` and `Lang.bind`, which predate ES6 classes and arrow functions. It is deprecated and signals legacy code that reviewers will reject.
+- **Fix**: Replace `Lang.Class` with ES6 `class` syntax. Replace `Lang.bind(this, fn)` with arrow functions or `.bind(this)`.
+
+#### Example
+
+**Before** (violation):
+```javascript
+const Lang = imports.lang;
+
+const MyIndicator = new Lang.Class({
+    Name: 'MyIndicator',
+    Extends: PanelMenu.Button,
+
+    _init: function() {
+        this.parent(0.0, 'My Indicator');
+        this._settings.connect('changed::key',
+            Lang.bind(this, this._onKeyChanged));
+    },
+});
+```
+
+**After** (idiomatic):
+```javascript
+const MyIndicator = GObject.registerClass(
+class MyIndicator extends PanelMenu.Button {
+    constructor() {
+        super(0.0, 'My Indicator');
+        this._settings.connect('changed::key',
+            () => this._onKeyChanged());
+    }
+});
+```
+
+### R-DEPR-03: No ByteArray import
+- **Severity**: blocking
+- **Checked by**: ego-lint.sh
+- **Rule**: Extension code must not import or use `ByteArray`.
+- **Rationale**: `ByteArray` is deprecated in modern GJS. The standard Web APIs `TextEncoder` and `TextDecoder` are now available and preferred.
+- **Fix**: Replace `ByteArray.toString(bytes)` with `new TextDecoder().decode(bytes)`. Replace `ByteArray.fromString(str)` with `new TextEncoder().encode(str)`.
+
+#### Example
+
+**Before** (violation):
+```javascript
+const ByteArray = imports.byteArray;
+
+const [ok, contents] = file.load_contents(null);
+const text = ByteArray.toString(contents);
+
+const bytes = ByteArray.fromString('hello');
+```
+
+**After** (idiomatic):
+```javascript
+const [ok, contents] = file.load_contents(null);
+const text = new TextDecoder().decode(contents);
+
+const bytes = new TextEncoder().encode('hello');
+```
+
+### R-DEPR-04: No imports.* legacy import style
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: Extension code should use ESM `import` syntax, not the legacy `imports.*` style.
+- **Rationale**: GNOME 45+ requires ESM modules. The legacy `imports.*` style will not work on GNOME 45 and later. While older extensions may still use it for backward compatibility, new submissions should use ESM.
+- **Fix**: Convert `const { Foo } = imports.gi.Foo` to `import Foo from 'gi://Foo'`. Convert `const ExtMe = imports.misc.extensionUtils` to `import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js'`.
+- **Tested by**: `tests/fixtures/deprecated-imports/`
+
+#### Example
+
+**Before** (violation):
+```javascript
+const { St, Clutter, GLib } = imports.gi;
+const Main = imports.ui.main;
+const ExtensionUtils = imports.misc.extensionUtils;
+const Me = ExtensionUtils.getCurrentExtension();
+```
+
+**After** (idiomatic):
+```javascript
+import St from 'gi://St';
+import Clutter from 'gi://Clutter';
+import GLib from 'gi://GLib';
+import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
+```
+
+### R-DEPR-08: No spawn_command_line_sync
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py
+- **Rule**: Extension code must not use `GLib.spawn_command_line_sync()`.
+- **Rationale**: `spawn_command_line_sync` blocks the main loop, freezing the compositor. Wechsel was rejected for this (April 2024). Use `Gio.Subprocess` which provides async execution, better error handling, and cancellation support.
+- **Fix**: Use `new Gio.Subprocess({argv: [...], flags: ...})` instead.
+
+### R-DEPR-09: No var declarations
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: Extension code should use `const` or `let` instead of `var`.
+- **Rationale**: `var` has function scope rather than block scope, which causes subtle bugs in closures and loops. Modern JavaScript uses `const` (preferred) and `let` (when reassignment is needed). EGO reviewers view `var` usage as a sign of outdated or AI-generated code.
+- **Fix**: Replace `var` with `const` (preferred) or `let` (when reassignment is needed).
+- **Note**: Suppressed (`skip-if-compiled`) for extensions compiled from TypeScript via esbuild, where `var` is emitted for transpiler helper functions.
+
+### R-DEPR-04-legacy: Legacy imports.* syntax (pre-GNOME 45)
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py (max-version: 44)
+- **Rule**: Extensions targeting GNOME 44 and earlier may use `imports.*` syntax, but should prepare for migration.
+- **Rationale**: GNOME 45 requires ESM modules. This advisory-only variant of R-DEPR-04 applies to extensions that still target pre-45 versions, encouraging migration readiness without blocking submission.
+- **Fix**: For GNOME 45+ readiness, replace `const X = imports.ui.main` with `import * as Main from 'resource:///org/gnome/shell/ui/main.js'`.
+
+### R-DEPR-10: No imports.format
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py
+- **Rule**: Extension code must not use `imports.format`.
+- **Rationale**: The `imports.format` module is deprecated and was removed in modern GJS. It provided a `format()` string method that is superseded by ES6 template literals.
+- **Fix**: Replace `format()` calls with template literals: `` `my ${variable} string` ``.
+
+### R-DEPR-11: No Shell.KeyBindingMode
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py
+- **Rule**: Extension code must not use `Shell.KeyBindingMode`.
+- **Rationale**: `Shell.KeyBindingMode` was removed before GNOME 40 and replaced by `Shell.ActionMode`. Any reference is dead code that will cause runtime errors.
+- **Fix**: Replace `Shell.KeyBindingMode` with `Shell.ActionMode`.
+- **Tested by**: `tests/fixtures/shell-keybinding-mode@test/`
+
+---
+
+## Web APIs (R-WEB)
+
+Rules for browser/Node.js APIs that are not available in GJS.
+
+> **Note**: R-WEB-01, R-WEB-02, R-WEB-10, and R-WEB-11 (timer APIs) are version-gated
+> to `max-version: 44`. GJS added native `setTimeout`/`setInterval`/`clearTimeout`/
+> `clearInterval` as global polyfills in GNOME 45. These rules are SKIP for extensions
+> targeting GNOME 45+.
+
+### R-WEB-01: No setTimeout()
+- **Severity**: blocking (GNOME ≤44 only)
+- **Version gate**: max-version 44
+- **Checked by**: apply-patterns.py
+- **Rule**: Extension code must not use `setTimeout()`.
+- **Rationale**: `setTimeout` is a browser/Node.js API that was not available in GJS before GNOME 45. GJS 45+ provides a native polyfill, so this rule only applies to extensions supporting GNOME 44 or earlier.
+- **Fix**: Replace `setTimeout(callback, ms)` with `GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => { callback(); return GLib.SOURCE_REMOVE; })`. Remember to store the returned ID and call `GLib.Source.remove(id)` in `destroy()`.
+
+#### Example
+
+**Before** (violation):
+```javascript
+enable() {
+    setTimeout(() => {
+        this._indicator.show();
+    }, 500);
+}
+```
+
+**After** (idiomatic):
+```javascript
+enable() {
+    this._showTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 500, () => {
+        this._indicator.show();
+        return GLib.SOURCE_REMOVE;
+    });
+}
+
+disable() {
+    if (this._showTimeoutId) {
+        GLib.Source.remove(this._showTimeoutId);
+        this._showTimeoutId = null;
+    }
+}
+```
+
+### R-WEB-02: No setInterval()
+- **Severity**: blocking (GNOME ≤44 only)
+- **Version gate**: max-version 44
+- **Checked by**: apply-patterns.py
+- **Rule**: Extension code must not use `setInterval()`.
+- **Rationale**: Same as `setTimeout` — not available in GJS before GNOME 45.
+- **Fix**: Replace `setInterval(callback, ms)` with `GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => { callback(); return GLib.SOURCE_CONTINUE; })`. Store the ID and remove it in `destroy()`.
+
+#### Example
+
+**Before** (violation):
+```javascript
+enable() {
+    this._intervalId = setInterval(() => {
+        this._pollStatus();
+    }, 10000);
+}
+
+disable() {
+    clearInterval(this._intervalId);
+}
+```
+
+**After** (idiomatic):
+```javascript
+enable() {
+    this._pollId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 10000, () => {
+        this._pollStatus();
+        return GLib.SOURCE_CONTINUE;
+    });
+}
+
+disable() {
+    if (this._pollId) {
+        GLib.Source.remove(this._pollId);
+        this._pollId = null;
+    }
+}
+```
+
+### R-WEB-03: No fetch()
+- **Severity**: blocking
+- **Checked by**: ego-lint.sh
+- **Rule**: Extension code must not use `fetch()`.
+- **Rationale**: The Fetch API is not available in GJS. Network requests must use GLib/Gio or Soup APIs.
+- **Fix**: For HTTP requests, use `Soup.Session` with `Soup.Message`. For local file I/O, use `Gio.File`. For simple GET requests, `Soup.Session.send_and_read_async()` is the modern async pattern.
+
+#### Example
+
+**Before** (violation):
+```javascript
+async _loadData() {
+    const response = await fetch('https://api.example.com/data');
+    const data = await response.json();
+    this._processData(data);
+}
+```
+
+**After** (idiomatic):
+```javascript
+import Soup from 'gi://Soup';
+
+async _loadData() {
+    const session = new Soup.Session();
+    const message = Soup.Message.new('GET', 'https://api.example.com/data');
+    const bytes = await session.send_and_read_async(message,
+        GLib.PRIORITY_DEFAULT, this._cancellable);
+    if (message.get_status() !== Soup.Status.OK)
+        throw new Error(`HTTP ${message.get_status()}`);
+    const text = new TextDecoder().decode(bytes.get_data());
+    const data = JSON.parse(text);
+    this._processData(data);
+}
+```
+
+---
+
+## Files (R-FILE)
+
+Rules for required and forbidden files in the extension source.
+
+### R-FILE-01: extension.js must exist
+- **Severity**: blocking
+- **Checked by**: ego-lint.sh
+- **Rule**: The extension directory must contain an `extension.js` file.
+- **Rationale**: `extension.js` is the entry point for GNOME Shell extensions. Without it, the extension cannot be loaded.
+- **Fix**: Create `extension.js` with the required `enable()` and `disable()` methods (or extend the `Extension` class).
+
+### R-FILE-02: metadata.json must exist
+- **Severity**: blocking
+- **Checked by**: ego-lint.sh
+- **Rule**: The extension directory must contain a `metadata.json` file.
+- **Rationale**: `metadata.json` provides essential metadata (UUID, name, shell-version) that GNOME Shell needs to identify and load the extension.
+- **Fix**: Create `metadata.json` with at minimum `uuid`, `name`, `description`, and `shell-version` fields.
+
+### R-FILE-03: LICENSE or COPYING should exist
+- **Severity**: advisory
+- **Checked by**: ego-lint.sh
+- **Rule**: The extension directory should contain a `LICENSE`, `LICENSE.md`, `COPYING`, or similar license file.
+- **Rationale**: EGO requires extensions to be open source. While the license can be specified in metadata, a dedicated license file is standard practice and expected by reviewers.
+- **Fix**: Add a `LICENSE` file with the full text of your chosen open source license (GPL-2.0+, GPL-3.0, MIT, etc.).
+
+### R-FILE-04: No binary files (.so, .o, .exe, .bin)
+- **Severity**: blocking
+- **Checked by**: ego-lint.sh
+- **Rule**: The extension must not contain compiled binary files.
+- **Rationale**: EGO does not allow binary files because they cannot be reviewed for security. All code must be source (JavaScript, XML, CSS, etc.).
+- **Fix**: Remove binary files. If native code is needed, provide build instructions and have users compile locally, or use GJS bindings for existing system libraries.
+
+### R-FILE-05: No AI artifacts (CLAUDE.md, .claude/, Cursor rules)
+- **Severity**: blocking
+- **Checked by**: check-package.sh + manual review
+- **Rule**: The extension must not contain AI assistant configuration files such as `CLAUDE.md`, `.claude/`, `.cursorrules`, `.cursor/`, or similar.
+- **Rationale**: These files are development tools, not part of the extension. Including them in a submission signals an unclean build process and may raise reviewer concerns.
+- **Fix**: Add these paths to `.gitignore` and exclude them from the packaging script. Verify with `check-package.sh` before submission.
+
+---
+
+## Package (R-PKG)
+
+Rules for the zip archive submitted to EGO.
+
+### R-PKG-01: No node_modules/ in zip
+- **Severity**: blocking
+- **Checked by**: check-package.sh
+- **Rule**: The submission zip must not contain a `node_modules/` directory.
+- **Rationale**: `node_modules` can contain thousands of files and megabytes of code that reviewers cannot audit. It also signals that the extension depends on npm packages, which is not the GNOME extension model.
+- **Fix**: Add `node_modules/` to your exclusion list in the packaging script. If you use npm for development tools (ESLint, etc.), ensure they are devDependencies only.
+
+### R-PKG-02: No .git/ in zip
+- **Severity**: blocking
+- **Checked by**: check-package.sh
+- **Rule**: The submission zip must not contain a `.git/` directory.
+- **Rationale**: The `.git/` directory contains the full repository history and can be very large. It is not part of the extension and wastes reviewer time.
+- **Fix**: Exclude `.git/` from the packaging script. Use `zip -r extension.zip . -x '.git/*'` or equivalent.
+
+### R-PKG-03: No .claude/ in zip
+- **Severity**: blocking
+- **Checked by**: check-package.sh
+- **Rule**: The submission zip must not contain a `.claude/` directory.
+- **Rationale**: AI assistant configuration directories are development tools. Including them in the submission is unprofessional and may delay review.
+- **Fix**: Exclude `.claude/` from the packaging script.
+
+### R-PKG-04: No CLAUDE.md in zip
+- **Severity**: blocking
+- **Checked by**: check-package.sh
+- **Rule**: The submission zip must not contain a `CLAUDE.md` file.
+- **Rationale**: Same as R-PKG-03. AI configuration files do not belong in a distribution package.
+- **Fix**: Exclude `CLAUDE.md` from the packaging script.
+
+### R-PKG-05: No .pot files in zip
+- **Severity**: blocking
+- **Checked by**: check-package.sh
+- **Rule**: The submission zip must not contain `.pot` (Portable Object Template) files.
+- **Rationale**: `.pot` files are translation templates generated from source code. They are build artifacts, not runtime files. Only compiled `.mo` files and `.po` source translations should be included.
+- **Fix**: Exclude `*.pot` from the packaging script. Include `po/*.po` files and any compiled `locale/` directory.
+
+### R-PKG-06: No .pyc or __pycache__ in zip
+- **Severity**: blocking
+- **Checked by**: check-package.sh
+- **Rule**: The submission zip must not contain `.pyc` files or `__pycache__/` directories.
+- **Rationale**: Python bytecode files are build artifacts. They indicate that Python scripts were run in the source tree without cleaning up.
+- **Fix**: Exclude `__pycache__/` and `*.pyc` from the packaging script.
+
+### R-PKG-07: No .env files in zip
+- **Severity**: blocking
+- **Checked by**: check-package.sh
+- **Rule**: The submission zip must not contain `.env` files.
+- **Rationale**: `.env` files often contain secrets, API keys, or environment-specific configuration. They are a security risk and have no place in a GNOME Shell extension package.
+- **Fix**: Exclude `.env` and `.env.*` from the packaging script. Add them to `.gitignore`.
+
+### R-PKG-08: extension.js must be in zip
+- **Severity**: blocking
+- **Checked by**: check-package.sh
+- **Rule**: The submission zip must contain `extension.js` at the archive root.
+- **Rationale**: GNOME Shell expects `extension.js` at the top level of the extracted extension directory. If it is missing or nested in a subdirectory, the extension will fail to load.
+- **Fix**: Ensure your packaging script creates the zip from inside the extension directory, not from a parent directory. The zip should not contain a top-level directory wrapper.
+
+### R-PKG-09: metadata.json must be in zip
+- **Severity**: blocking
+- **Checked by**: check-package.sh
+- **Rule**: The submission zip must contain `metadata.json` at the archive root.
+- **Rationale**: Same as R-PKG-08. GNOME Shell requires `metadata.json` at the top level to identify and validate the extension.
+- **Fix**: Same approach as R-PKG-08. Verify by running `unzip -l your-extension.zip | head` and confirming files are at the root level.
+
+---
+
+## CSS (R-CSS)
+
+Rules for stylesheet.css styling practices.
+
+### R-CSS-01: Class names should be scoped
+- **Severity**: advisory
+- **Checked by**: ego-lint.sh
+- **Rule**: Custom CSS class names should use an extension-specific prefix to avoid collisions with GNOME Shell's built-in styles.
+- **Rationale**: GNOME Shell extensions share a global CSS namespace. Unscoped class names like `.container` or `.label` may conflict with Shell's own styles or other extensions, causing visual glitches.
+- **Fix**: Prefix all custom class names with your extension name or abbreviation (e.g., `.myext-container`, `.myext-label`). Alternatively, scope styles under a parent class unique to your extension.
+
+### R-CSS-02: Avoid styling GNOME Shell built-in classes without scoping
+- **Severity**: advisory
+- **Checked by**: manual review
+- **Rule**: If the extension styles GNOME Shell built-in classes (e.g., `.popup-menu-item`, `.panel-button`), the selectors should be scoped under an extension-specific parent class.
+- **Rationale**: Unscoped overrides of built-in Shell classes affect the entire desktop, not just the extension's UI. This can break other extensions or Shell elements.
+- **Fix**: Wrap your UI in a container with a unique class and scope all built-in class overrides under it: `.myext-panel .popup-menu-item { ... }`.
+
+---
+
+## Web APIs — Extended (R-WEB, continued)
+
+Additional web/browser API rules detected by pattern matching.
+
+### R-WEB-04: No XMLHttpRequest
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py
+- **Rule**: Extension code must not use `XMLHttpRequest`.
+- **Rationale**: `XMLHttpRequest` is a browser API not available in GJS. Extensions must use `Soup.Session` for HTTP requests.
+- **Fix**: Replace with `Soup.Session` and `Soup.Message` for HTTP requests, or `Gio.File` for local file I/O.
+
+### R-WEB-05: No requestAnimationFrame()
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py
+- **Rule**: Extension code must not use `requestAnimationFrame()`.
+- **Rationale**: `requestAnimationFrame` is a browser rendering API. GNOME Shell uses Clutter's animation framework instead.
+- **Fix**: Use Clutter animation APIs such as `Clutter.Timeline`, `St.Adjustment`, or property transitions via `ease()`.
+
+### R-WEB-06: No DOM APIs (document.*)
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py
+- **Rule**: Extension code must not use `document.createElement`, `document.getElementById`, `document.querySelector`, or similar DOM APIs.
+- **Rationale**: There is no DOM in GNOME Shell. The UI is built with Clutter/St actors, not HTML elements.
+- **Fix**: Use `St.Widget` subclasses (`St.BoxLayout`, `St.Label`, `St.Button`, etc.) to build UI elements.
+
+### R-WEB-07: No window object usage
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py
+- **Rule**: Extension code must not reference the `window` global object (e.g., `window.setTimeout`, `window.location`).
+- **Rationale**: The `window` global does not exist in GJS. Any reference to it indicates browser-targeted code that will fail at runtime.
+- **Fix**: Remove `window.` references. Use the appropriate GJS/GNOME API for the intended functionality.
+
+### R-WEB-08: No localStorage
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py
+- **Rule**: Extension code must not use `localStorage` or `sessionStorage`.
+- **Rationale**: Web Storage APIs are not available in GJS. Extensions must use GSettings for persistent configuration.
+- **Fix**: Use `Gio.Settings` (via `this.getSettings()` in the Extension class) for persistent key-value storage.
+
+### R-WEB-09: No require() (Node.js)
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py
+- **Rule**: Extension code must not use `require()` to load modules.
+- **Rationale**: `require()` is a Node.js/CommonJS API. GJS uses ESM `import` syntax (GNOME 45+) or the legacy `imports.*` system.
+- **Fix**: Replace `require('module')` with `import ... from 'gi://Module'` or the appropriate GJS import syntax.
+
+### R-WEB-10: No clearTimeout()
+- **Severity**: blocking (GNOME ≤44 only)
+- **Version gate**: max-version 44
+- **Checked by**: apply-patterns.py
+- **Rule**: Extension code must not use `clearTimeout()`.
+- **Rationale**: `clearTimeout` is a browser API. GJS added it natively in GNOME 45. For GNOME ≤44, use `GLib.Source.remove()`.
+- **Fix**: Store the return value of `GLib.timeout_add()` and pass it to `GLib.Source.remove(sourceId)`.
+- **Tested by**: `tests/fixtures/web-apis/`, `tests/fixtures/timer-apis-g45@test/`
+
+### R-WEB-11: No clearInterval()
+- **Severity**: blocking (GNOME ≤44 only)
+- **Version gate**: max-version 44
+- **Checked by**: apply-patterns.py
+- **Rule**: Extension code must not use `clearInterval()`.
+- **Rationale**: Same as R-WEB-10. GJS added `clearInterval` natively in GNOME 45.
+- **Fix**: Store the return value of `GLib.timeout_add()` and pass it to `GLib.Source.remove(sourceId)`.
+- **Tested by**: `tests/fixtures/web-apis/`, `tests/fixtures/timer-apis-g45@test/`
+
+### R-WEB-12: Promise.race() without destroyed guards
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: Extension code should avoid `Promise.race()` without `_destroyed` guards.
+- **Rationale**: `Promise.race()` resolves when the first promise completes, but the losing promises continue executing. In GNOME extensions, this can cause callbacks to run after `disable()` has been called, leading to use-after-free errors or acting on stale state.
+- **Fix**: Ensure `_destroyed` is checked after the race resolves. Consider whether a simpler alternative (e.g., `Gio.Cancellable`) would be safer.
+
+---
+
+## Deprecated APIs — Extended (R-DEPR, continued)
+
+Additional deprecated API rules detected by pattern matching.
+
+### R-DEPR-05: No ExtensionUtils (removed in GNOME 45+)
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py
+- **Rule**: Extension code must not import or use `ExtensionUtils`.
+- **Rationale**: `ExtensionUtils` was removed in GNOME 45 when extensions migrated to ESM. Its functionality is now provided by the `Extension` base class.
+- **Fix**: Replace `ExtensionUtils.getCurrentExtension()` with `this` (inside the Extension class). Replace `ExtensionUtils.getSettings()` with `this.getSettings()`. Replace `ExtensionUtils.initTranslations()` with the Extension class's built-in translation support.
+
+#### Example
+
+**Before** (violation):
+```javascript
+const ExtensionUtils = imports.misc.extensionUtils;
+const Me = ExtensionUtils.getCurrentExtension();
+
+function init() {
+    ExtensionUtils.initTranslations();
+}
+
+function enable() {
+    const settings = ExtensionUtils.getSettings();
+    const path = Me.path;
+}
+```
+
+**After** (idiomatic):
+```javascript
+import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
+
+export default class MyExtension extends Extension {
+    enable() {
+        const settings = this.getSettings();
+        const path = this.path;
+    }
+
+    disable() {
+        // cleanup
+    }
+}
+```
+
+### R-DEPR-06: No Tweener (removed)
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py
+- **Rule**: Extension code must not import or use `Tweener`.
+- **Rationale**: `Tweener` was GNOME Shell's legacy animation library. It was removed and replaced with Clutter's native property transitions and `ease()` methods.
+- **Fix**: Replace `Tweener.addTween(actor, { ... })` with `actor.ease({ ... })` using Clutter's built-in animation support.
+
+#### Example
+
+**Before** (violation):
+```javascript
+const Tweener = imports.ui.tweener;
+
+_fadeIn() {
+    Tweener.addTween(this._overlay, {
+        opacity: 255,
+        time: 0.3,
+        transition: 'easeOutQuad',
+        onComplete: () => this._onFadeComplete(),
+    });
+}
+```
+
+**After** (idiomatic):
+```javascript
+_fadeIn() {
+    this._overlay.ease({
+        opacity: 255,
+        duration: 300,
+        mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+        onComplete: () => this._onFadeComplete(),
+    });
+}
+```
+
+### R-DEPR-07: No imports.misc.convenience (removed in GNOME 45+)
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py
+- **Rule**: Extension code must not import `imports.misc.convenience`.
+- **Rationale**: The `convenience` module was a GNOME Shell internal that provided helper functions like `getSettings()` and `initTranslations()`. It was removed in GNOME 45 along with the legacy import system.
+- **Fix**: Use the `Extension` base class methods: `this.getSettings()` for GSettings access and the built-in translation support for i18n.
+
+---
+
+## AI Slop Signals (R-SLOP)
+
+Rules that detect patterns commonly found in AI-generated extensions. These are advisory signals — they do not necessarily indicate incorrect code, but they correlate strongly with low-quality AI output that EGO reviewers will scrutinize.
+
+### R-SLOP-01: TypeScript-style @param JSDoc
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: JSDoc comments should not use TypeScript-style `@param {Type} name` annotations.
+- **Rationale**: GNOME Shell extensions are plain JavaScript (not TypeScript). JSDoc type annotations in the `{Type}` format are a strong signal that code was generated by an AI trained primarily on TypeScript codebases. EGO reviewers recognize this pattern.
+- **Fix**: Remove type annotations from JSDoc comments, or remove JSDoc entirely if the code is self-documenting. GJS does not process JSDoc types.
+- **Provenance suppression**: When `quality/code-provenance` reports a score >= 3 (moderate-to-high hand-written indicators), R-SLOP-01 warnings are automatically suppressed. Hand-written code uses JSDoc as intentional documentation, not AI slop. A `provenance/jsdoc-suppressed` PASS line is emitted instead.
+
+#### Example
+
+**Before** (violation):
+```javascript
+/**
+ * Updates the panel indicator with the current battery status.
+ * @param {number} level - The battery level (0-100)
+ * @param {boolean} charging - Whether the device is charging
+ * @param {string} icon - The icon name to display
+ */
+_updateIndicator(level, charging, icon) {
+    // ...
+}
+```
+
+**After** (idiomatic):
+```javascript
+// Update panel indicator with current battery status
+_updateIndicator(level, charging, icon) {
+    // ...
+}
+```
+
+### R-SLOP-02: TypeScript-style @returns JSDoc
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: JSDoc comments should not use TypeScript-style `@returns {Type}` annotations.
+- **Rationale**: Same as R-SLOP-01. `@returns {Type}` is a TypeScript convention that has no effect in GJS and signals AI-generated code.
+- **Fix**: Remove `@returns {Type}` annotations from JSDoc comments.
+- **Provenance suppression**: Same as R-SLOP-01 — suppressed when provenance score >= 3.
+
+#### Example
+
+**Before** (violation):
+```javascript
+/**
+ * Gets the active workspace index.
+ * @returns {number} The zero-based workspace index
+ */
+_getActiveWorkspace() {
+    return global.workspace_manager.get_active_workspace_index();
+}
+```
+
+**After** (idiomatic):
+```javascript
+_getActiveWorkspace() {
+    return global.workspace_manager.get_active_workspace_index();
+}
+```
+
+### R-SLOP-05: Non-standard homepage field
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: `metadata.json` should not contain a `homepage` field.
+- **Rationale**: The correct field name is `url`, not `homepage`. `homepage` is an npm `package.json` convention that AIs frequently mix up with GNOME metadata.
+- **Fix**: Rename `"homepage"` to `"url"` in `metadata.json`.
+
+### R-SLOP-06: Non-standard bug-report-url field
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: `metadata.json` should not contain a `bug-report-url` field.
+- **Rationale**: `bug-report-url` is not a recognized `metadata.json` field. The standard `url` field should point to the project repository where issues can be filed.
+- **Fix**: Remove `"bug-report-url"` from `metadata.json`. Use the `"url"` field to link to the project repository.
+
+---
+
+## Code Quality Heuristics (R-QUAL)
+
+Heuristic rules that detect code patterns commonly seen in AI-generated or over-engineered extensions. These are advisory-only — they flag code that EGO reviewers are likely to question but do not block submission.
+
+### R-QUAL-01: Excessive try-catch density
+- **Severity**: advisory
+- **Checked by**: check-quality.py
+- **Rule**: Extension code should not wrap every few lines in try-catch blocks.
+- **Rationale**: Excessive try-catch usage is a hallmark of AI-generated code that defensively wraps everything. It obscures control flow, hides bugs, and makes the code harder to review. Well-structured GNOME extensions use try-catch sparingly for specific error-prone operations (file I/O, DBus calls).
+- **Fix**: Remove unnecessary try-catch blocks. Let errors propagate naturally and handle them at appropriate boundaries. Use try-catch only around operations that can legitimately fail (network, file system, DBus).
+
+### R-QUAL-02: Impossible state checks
+- **Severity**: advisory
+- **Checked by**: check-quality.py
+- **Rule**: Extension code should not check for states that are impossible given its configuration. For example, comparing `Main.sessionMode.currentMode` with `'unlock-dialog'` without declaring `unlock-dialog` in `session-modes`. Note: `sessionMode.isLocked` is exempt — reading lock state is always a defensive guard pattern, not evidence of lock screen functionality.
+- **Rationale**: If the extension does not declare `unlock-dialog` in `session-modes`, it is never active on the lock screen, so checking `currentMode` against lock-screen values is dead code. This pattern is common in AI-generated extensions that copy-paste lock-screen handling without understanding when it applies.
+- **Fix**: Either add `"unlock-dialog"` to `session-modes` in `metadata.json` (if lock-screen support is intended) or remove the `currentMode` comparison code.
+
+### R-QUAL-03: Over-engineered async coordination
+- **Severity**: advisory
+- **Checked by**: check-quality.py
+- **Rule**: Extension code should not use patterns like `_pendingDestroy` combined with `_initializing` flags for async lifecycle coordination.
+- **Rationale**: This pattern appears in AI-generated extensions that over-engineer enable/disable lifecycle management. GNOME Shell guarantees that `disable()` runs after `enable()` completes, so complex coordination flags are unnecessary and indicate misunderstanding of the extension lifecycle.
+- **Fix**: Remove coordination flags. Trust the GNOME Shell extension lifecycle: `enable()` and `disable()` are called sequentially. If async operations need cleanup, use `GLib.Source.remove()` or `Gio.Cancellable`.
+
+### R-QUAL-04: Module-level mutable state
+- **Severity**: advisory
+- **Checked by**: check-quality.py
+- **Rule**: Extension code should avoid declaring mutable variables (`let` or `var`) at module scope (outside any class or function).
+- **Rationale**: Module-level mutable state persists across enable/disable cycles, leading to subtle bugs. GNOME Shell extensions should keep all mutable state inside the `Extension` class instance, which is created fresh on each enable cycle.
+- **Fix**: Move mutable state into the Extension class as instance properties. Use `const` for module-level declarations that are truly constant (imports, enums, configuration).
+- **Scope exclusion**: Files in `service/` are excluded (daemon processes have different lifecycle — no enable/disable).
+
+### R-QUAL-05: Empty catch blocks
+- **Severity**: advisory
+- **Checked by**: check-quality.py
+- **Rule**: Extension code should not have empty `catch` blocks that silently swallow errors.
+- **Rationale**: Empty catch blocks hide bugs and make debugging impossible. If an error occurs, it disappears silently. At minimum, errors should be logged with `console.debug()` or `console.error()`.
+- **Fix**: Add error logging to catch blocks: `catch (e) { console.debug('Operation failed:', e.message); }`. If the error is truly expected and ignorable, add a comment explaining why.
+
+---
+
+## Metadata — Extended (R-META, continued)
+
+Additional metadata rules from enhanced check-metadata.py checks.
+
+### R-META-13: UUID must contain @
+- **Severity**: blocking
+- **Checked by**: check-metadata.py
+- **Rule**: The `uuid` field in `metadata.json` must contain an `@` character.
+- **Rationale**: The standard UUID format for GNOME Shell extensions is `extension-name@domain`. While the `@` is not strictly enforced by GNOME Shell itself, EGO requires it and reviewers will reject UUIDs without it.
+- **Fix**: Add an `@` and domain to the UUID: `my-extension@example.com`.
+
+### R-META-14: Non-standard metadata fields
+- **Severity**: advisory
+- **Checked by**: check-metadata.py
+- **Rule**: `metadata.json` should only contain recognized fields (`uuid`, `name`, `description`, `shell-version`, `session-modes`, `settings-schema`, `url`, `version`, `gettext-domain`, `original-author`, `donations`).
+- **Rationale**: Non-standard fields are ignored by GNOME Shell and EGO. Their presence often indicates AI-generated metadata that hallucinated npm or other ecosystem conventions. Reviewers may question unfamiliar fields.
+- **Fix**: Remove any fields not in the recognized set. Use `url` instead of `homepage`, and remove fields like `author`, `license`, `version-name`, or `bug-report-url`.
+
+### R-META-15: Deprecated version field
+- **Severity**: advisory
+- **Checked by**: check-metadata.py
+- **Rule**: `metadata.json` should not contain a `version` field.
+- **Rationale**: The `version` field is deprecated. EGO manages extension versioning automatically and increments it on each upload. Including a manual version number is harmless but unnecessary and may confuse contributors.
+- **Fix**: Remove `"version"` from `metadata.json`.
+
+---
+
+## Package — Extended (R-PKG, continued)
+
+Additional package validation rules.
+
+### R-PKG-10: No nested zip structure
+- **Severity**: blocking
+- **Checked by**: check-package.sh
+- **Rule**: The zip archive must have `extension.js` and `metadata.json` at the archive root, not nested inside a subdirectory.
+- **Rationale**: GNOME Shell extracts the zip directly into the extensions directory. If files are nested inside a subdirectory (e.g., `my-extension/extension.js`), the extension will fail to load because GNOME Shell expects files at the top level.
+- **Fix**: Create the zip from inside the extension directory: `cd my-extension && zip -r ../my-extension.zip .` instead of `zip -r my-extension.zip my-extension/`.
+
+### R-PKG-11: Missing compiled schemas
+- **Severity**: blocking
+- **Checked by**: check-package.sh
+- **Rule**: If the extension includes `.gschema.xml` files in `schemas/`, the compiled `schemas/gschemas.compiled` file must also be present in the zip.
+- **Rationale**: GNOME Shell loads GSettings schemas from the compiled binary, not the XML source. If the compiled file is missing, the extension's settings will fail to load at runtime.
+- **Fix**: Run `glib-compile-schemas schemas/` before packaging to generate `schemas/gschemas.compiled`. Include it in the zip.
+
+---
+
+## Schema — Extended (R-SCHEMA, continued)
+
+Additional GSettings schema validation rules.
+
+### R-SCHEMA-06: Schema path must end with trailing slash
+- **Severity**: blocking
+- **Checked by**: check-schema.sh
+- **Rule**: The `path` attribute of the `<schema>` element must end with a `/` character.
+- **Rationale**: dconf paths are directory-like and must end with a trailing slash. A missing trailing slash causes GSettings to fail to locate the schema path at runtime.
+- **Fix**: Add a trailing slash to the schema path: `path="/org/gnome/shell/extensions/my-extension/"`.
+
+### R-SCHEMA-07: Schema filename should match schema ID
+- **Severity**: advisory
+- **Checked by**: check-schema.sh
+- **Rule**: The schema filename should follow the convention `<schema-id>.gschema.xml` (e.g., `org.gnome.shell.extensions.my-ext.gschema.xml` for schema ID `org.gnome.shell.extensions.my-ext`).
+- **Rationale**: While GNOME Shell does not enforce a filename convention, mismatched filenames cause confusion during review and maintenance. EGO reviewers expect the filename to match the schema ID for clarity.
+- **Fix**: Rename the schema file to match its ID: `mv schemas/old-name.gschema.xml schemas/org.gnome.shell.extensions.your-extension.gschema.xml`.
+
+---
+
+## Security (R-SEC)
+
+Rules for security-sensitive patterns that will cause EGO rejection.
+
+### R-SEC-01: No eval()
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py
+- **Rule**: Extension code must not use `eval()`.
+- **Rationale**: `eval()` executes arbitrary code strings, creating a code injection attack surface. No legitimate GNOME extension use case requires it.
+- **Fix**: Remove `eval()`. Use `JSON.parse()` for data parsing, lookup tables for dynamic dispatch.
+- **Tested by**: `tests/fixtures/security-patterns@test/`
+
+### R-SEC-02: No new Function()
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py
+- **Rule**: Extension code must not use `new Function()`.
+- **Rationale**: `new Function()` is equivalent to `eval()` — it creates a function from a code string, enabling code injection.
+- **Fix**: Replace with a direct function definition or a lookup table.
+- **Tested by**: `tests/fixtures/security-patterns@test/`
+
+### R-SEC-03: Use HTTPS instead of HTTP
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: Network URLs should use HTTPS, not HTTP (except localhost/127.0.0.1/[::1]).
+- **Rationale**: HTTP traffic is unencrypted and vulnerable to man-in-the-middle attacks. EGO reviewers expect HTTPS for any external network communication.
+- **Fix**: Change `http://` to `https://`.
+- **Tested by**: `tests/fixtures/security-patterns@test/`
+
+### R-SEC-04: No pkexec/sudo
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py
+- **Rule**: Extension code must not use `pkexec` or `sudo` for privilege escalation.
+- **Rationale**: Privilege escalation is a near-instant rejection from EGO reviewers. Extensions should not require root access. Hardware access can be achieved through udev rules or systemd services with capabilities.
+- **Fix**: Use a udev rule to grant write access to sysfs files, or a systemd service with capabilities.
+- **Tested by**: `tests/fixtures/security-patterns@test/` (fixture does not include pkexec, but rule matches in hara-hachi-bu)
+
+### R-SEC-05: No shell injection via /bin/sh -c
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: Subprocess calls should not use `/bin/sh -c` to execute shell strings.
+- **Rationale**: Passing commands through a shell interpreter risks command injection if any part of the command is derived from user input or external data. Using an explicit argv array avoids this risk.
+- **Fix**: Pass command and arguments as separate argv array elements instead of a shell string.
+- **Tested by**: `tests/fixtures/security-patterns@test/`
+
+---
+
+## Imports — Extended (R-IMPORT, continued)
+
+### R-IMPORT-08: No Shell UI modules in prefs.js
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py
+- **Rule**: `prefs.js` must not import Shell UI modules via `resource:///org/gnome/shell/ui/`.
+- **Rationale**: The preferences window runs in a separate GTK process that does not have access to GNOME Shell's UI modules. Importing them will cause an error when opening preferences.
+- **Fix**: Use only GTK/Adw/Gio/GLib in preferences code. Shell UI modules are only available in the extension runtime.
+
+---
+
+## Code Quality Heuristics — Extended (R-QUAL, continued)
+
+### R-QUAL-06: Excessive _destroyed flag density
+- **Severity**: advisory
+- **Checked by**: check-quality.py
+- **Rule**: Extension code should not have an excessive density of `_destroyed`, `_pendingDestroy`, or `_initializing` checks (ratio > 0.02 with >= 10 occurrences).
+- **Rationale**: High density of destroyed-flag checks indicates over-defensive coding, typically from AI-generated code that inserts guards after every operation. This makes code harder to read and maintain.
+- **Fix**: Trust the GNOME Shell extension lifecycle. Use a single `_destroyed` check at the entry point of async callbacks, not between every line.
+- **Tested by**: `tests/fixtures/destroyed-density@test/`
+
+### R-QUAL-07: No mock/test code in production
+- **Severity**: advisory
+- **Checked by**: check-quality.py
+- **Rule**: Extension submissions should not contain mock or test files (MockDevice.js, test*.js, *.spec.js) or runtime mock triggers (MOCK_MODE, use_mock).
+- **Rationale**: Mock and test code is for development only. Shipping it in a production extension wastes space, confuses reviewers, and suggests an unclean build process.
+- **Fix**: Remove mock/test files from the extension directory. Add them to `.gitignore` or a separate `tests/` directory excluded from packaging.
+- **Tested by**: `tests/fixtures/mock-in-production@test/`
+
+### R-QUAL-08: No resource allocation in constructors
+- **Severity**: advisory
+- **Checked by**: check-quality.py
+- **Rule**: Constructors should not call `this.getSettings()`, `.connect()`, `.connectObject()`, `timeout_add`, or `new Gio.DBusProxy()`. Skips widget base classes (St.Widget, Clutter.Actor, Clutter.Effect, Clutter.ShaderEffect, Shell.BlurEffect, etc.), classes with `destroy()`/`_destroy()`/`onDestroy()`/`disable()` methods, and classes using `connectSmart`/`connectObject` (lifecycle-aware).
+- **Rationale**: GNOME Shell extensions should perform resource allocation in `enable()` and cleanup in `disable()`. Allocating resources in constructors means they persist across enable/disable cycles, leading to resource leaks and zombie signal handlers.
+- **Fix**: Move resource allocation from `constructor()`/`_init()` to `enable()`. Move cleanup to `disable()`.
+- **Tested by**: `tests/fixtures/constructor-smart-cleanup@test/`, `tests/fixtures/constructor-lifecycle-expanded@test/`
+
+---
+
+## Files — Extended (R-FILE, continued)
+
+### R-FILE-06: No minified or bundled JavaScript
+- **Severity**: blocking
+- **Checked by**: ego-lint.sh
+- **Rule**: Extension code must not be minified or bundled (webpack, rollup, etc.).
+- **Rationale**: EGO reviewers must be able to read and audit all code. Minified code (lines > 500 chars) or bundled code (webpack boilerplate) cannot be reviewed and will be rejected.
+- **Fix**: Submit readable, unminified source code. Do not use bundlers for GNOME extensions — GJS supports ESM imports natively.
+- **Tested by**: `tests/fixtures/minified-js@test/`
+
+---
+
+## AI Slop Signals — Extended (R-SLOP, continued)
+
+### R-SLOP-07: Magic button numbers
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: Extension code should use `Clutter.BUTTON_PRIMARY`, `Clutter.BUTTON_MIDDLE`, and `Clutter.BUTTON_SECONDARY` instead of magic numbers 1, 2, 3.
+- **Rationale**: Magic button numbers are a common AI-generated code pattern. Using Clutter constants is more readable and follows GNOME coding conventions.
+- **Fix**: Replace `.get_button() === 1` with `.get_button() === Clutter.BUTTON_PRIMARY`, 2 with `Clutter.BUTTON_MIDDLE`, 3 with `Clutter.BUTTON_SECONDARY`.
+
+---
+
+## Lifecycle (R-LIFE)
+
+Rules for extension lifecycle management: enable/disable hooks, signal cleanup, and timeout tracking.
+
+### R-LIFE-01: Signal Balance
+- **Severity**: advisory
+- **Checked by**: check-lifecycle.py
+- **Rule**: Detects imbalance between manual `.connect()` and `.disconnect()` calls (threshold: >2 imbalance). Recognizes `connectObject()`, `connectSmart()`, and `SignalTracker`/`SignalManager` as auto-cleanup patterns. Excludes: non-signal `.connect()` calls (no string-literal first argument), `'destroy'` signal connections (inherently self-cleaning), and signals on local/ephemeral variables (no `this` reference — garbage collected with scope).
+- **Rationale**: Unmatched signal connections are the #1 cause of extension rejections. Leaked signals cause memory leaks and crash loops.
+- **Fix**: For each `.connect()` call, ensure a matching `.disconnect()` in disable/destroy. Consider using `connectObject()` or a custom signal tracker for automatic cleanup.
+- **Tested by**: `tests/fixtures/lifecycle-basic@test/`, `tests/fixtures/signal-smart-connect@test/`, `tests/fixtures/signal-non-gobject@test/`, `tests/fixtures/signal-destroy-connect@test/`, `tests/fixtures/signal-local-variable@test/`
+
+#### Example
+
+**Before** (violation):
+```javascript
+enable() {
+    this._settingsId = this._settings.connect('changed::theme', () => {
+        this._onThemeChanged();
+    });
+    this._displayId = global.display.connect('window-created', (d, w) => {
+        this._onWindowCreated(w);
+    });
+    this._wmId = global.window_manager.connect('map', (wm, actor) => {
+        this._onMap(actor);
+    });
+}
+
+disable() {
+    this._settings.disconnect(this._settingsId);
+    // BUG: displayId and wmId never disconnected — 2 leaked signals
+}
+```
+
+**After** (idiomatic):
+```javascript
+enable() {
+    this._settings.connectObject(
+        'changed::theme', () => this._onThemeChanged(),
+        this);
+    global.display.connectObject(
+        'window-created', (d, w) => this._onWindowCreated(w),
+        this);
+    global.window_manager.connectObject(
+        'map', (wm, actor) => this._onMap(actor),
+        this);
+}
+
+disable() {
+    this._settings.disconnectObject(this);
+    global.display.disconnectObject(this);
+    global.window_manager.disconnectObject(this);
+}
+```
+
+### R-LIFE-02: Untracked Timeouts
+- **Severity**: advisory
+- **Checked by**: check-lifecycle.py
+- **Rule**: `timeout_add` or `idle_add` call whose return value is not stored.
+- **Rationale**: Without the source ID, the timeout cannot be removed in disable(), causing callbacks after extension teardown.
+- **Fix**: Store the return value: `this._timeoutId = GLib.timeout_add(...)` and call `GLib.Source.remove(this._timeoutId)` in disable().
+- **Scope exclusion**: Files in `service/` are excluded (daemon processes have different lifecycle — no enable/disable).
+- **Tested by**: `tests/fixtures/lifecycle-basic@test/`
+
+#### Example
+
+**Before** (violation):
+```javascript
+enable() {
+    // Return value discarded — no way to cancel this timeout
+    GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 30, () => {
+        this._refresh();
+        return GLib.SOURCE_CONTINUE;
+    });
+}
+```
+
+**After** (idiomatic):
+```javascript
+enable() {
+    this._refreshId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 30, () => {
+        this._refresh();
+        return GLib.SOURCE_CONTINUE;
+    });
+}
+
+disable() {
+    if (this._refreshId) {
+        GLib.Source.remove(this._refreshId);
+        this._refreshId = null;
+    }
+}
+```
+
+### R-LIFE-03: Missing enable/disable
+- **Severity**: blocking
+- **Checked by**: check-lifecycle.py
+- **Rule**: extension.js must define both `enable()` and `disable()` methods.
+- **Rationale**: These are the fundamental lifecycle hooks. Missing either means the extension cannot be properly managed.
+- **Fix**: Add the missing method. `disable()` must reverse everything `enable()` sets up.
+- **Tested by**: `tests/fixtures/lifecycle-basic@test/`
+
+#### Example
+
+**Before** (violation):
+```javascript
+import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
+
+export default class MyExtension extends Extension {
+    enable() {
+        this._indicator = new MyIndicator();
+        Main.panel.addToStatusArea('my-ext', this._indicator);
+    }
+    // Missing disable() — indicator is never removed
+}
+```
+
+**After** (idiomatic):
+```javascript
+import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
+
+export default class MyExtension extends Extension {
+    enable() {
+        this._indicator = new MyIndicator();
+        Main.panel.addToStatusArea('my-ext', this._indicator);
+    }
+
+    disable() {
+        this._indicator?.destroy();
+        this._indicator = null;
+    }
+}
+```
+
+### R-LIFE-04: connectObject Migration Advisory
+- **Severity**: advisory
+- **Checked by**: check-lifecycle.py
+- **Rule**: Suggests `connectObject()` when 3+ manual connect/disconnect pairs exist without any connectObject usage.
+- **Rationale**: `connectObject()` provides automatic cleanup via `disconnectObject(this)`, reducing boilerplate and leak risk.
+- **Fix**: Migrate manual connect/disconnect pairs to `connectObject()` with `this` as the last argument.
+- **Tested by**: `tests/fixtures/lifecycle-basic@test/`
+
+### R-LIFE-05: Async/await without _destroyed guard
+- **Severity**: advisory
+- **Checked by**: check-lifecycle.py
+- **Rule**: Extensions using `async`/`await` should have a `_destroyed` or `_isDestroyed` flag to guard against acting on stale state after `disable()`.
+- **Rationale**: When an async function suspends at `await`, the extension may be disabled before the promise resolves. Without a `_destroyed` guard, the resumed code will operate on a torn-down extension, causing errors or zombie behavior.
+- **Fix**: Add a `_destroyed = false` flag in `enable()`, set it to `true` in `disable()`, and check it after each `await`: `if (this._destroyed) return;`.
+
+### R-LIFE-06: Timeout callback missing SOURCE_REMOVE/SOURCE_CONTINUE
+- **Severity**: advisory
+- **Checked by**: check-lifecycle.py
+- **Rule**: Callbacks passed to `GLib.timeout_add()` or `GLib.idle_add()` should explicitly return `GLib.SOURCE_REMOVE` or `GLib.SOURCE_CONTINUE`.
+- **Rationale**: If a timeout callback does not return `GLib.SOURCE_REMOVE` (or `false`), the default return value of `undefined` is falsy and the timeout is removed — but this is implicit and confusing. If the intent is to repeat, forgetting `SOURCE_CONTINUE` silently breaks the timer. Explicit return values make the intent clear and are expected by EGO reviewers.
+- **Fix**: Add `return GLib.SOURCE_REMOVE;` for one-shot timeouts or `return GLib.SOURCE_CONTINUE;` for repeating timeouts at the end of the callback.
+- **Scope exclusion**: Files in `service/` are excluded (daemon processes have different lifecycle — no enable/disable).
+
+### R-LIFE-07: D-Bus proxy without signal disconnect
+- **Severity**: advisory
+- **Checked by**: check-lifecycle.py
+- **Rule**: Extensions that create D-Bus proxies (`Gio.DBusProxy`, `makeProxyWrapper`) should disconnect their signal handlers in `disable()`.
+- **Rationale**: D-Bus proxy signals persist across enable/disable cycles if not explicitly disconnected. This causes leaked signal handlers that fire callbacks on a disabled extension, leading to errors and resource leaks.
+- **Fix**: Call `.disconnect()` or `.disconnectObject()` on the proxy in `disable()` to clean up signal handlers.
+
+### R-LIFE-08: File monitor without cancel
+- **Severity**: advisory
+- **Checked by**: check-lifecycle.py
+- **Rule**: Extensions that create file monitors (`monitor_file()`, `monitor_directory()`, `monitor_children()`) must call `.cancel()` in `disable()`.
+- **Rationale**: File monitors continue to fire `changed` signals after the extension is disabled if not cancelled. This causes callbacks to run on torn-down state, leading to errors.
+- **Fix**: Store the monitor reference and call `this._monitor.cancel()` in `disable()`.
+
+### R-LIFE-09: Keybinding add without remove
+- **Severity**: blocking
+- **Checked by**: check-lifecycle.py
+- **Rule**: Every `Main.wm.addKeybinding()` call must have a matching `Main.wm.removeKeybinding()` call.
+- **Rationale**: Keybindings that are not removed in `disable()` persist after the extension is disabled. They continue to intercept key events, potentially conflicting with other extensions or GNOME Shell itself. This is a common cause of EGO rejection.
+- **Fix**: Call `Main.wm.removeKeybinding('keybinding-name')` in `disable()` for each keybinding added in `enable()`.
+
+### R-LIFE-12: Stored timeout without Source.remove() in disable()
+- **Severity**: advisory
+- **Checked by**: check-lifecycle.py
+- **Rule**: If a timeout/idle source ID is stored (e.g., `this._timeoutId = GLib.timeout_add(...)`), `GLib.Source.remove()` must be called with that ID in disable()
+- **Rationale**: Lingering timers execute callbacks on destroyed objects, causing crashes. Search Light was rejected for this (May 2024).
+- **Fix**: Add `GLib.Source.remove(this._timeoutId)` to disable() before nulling
+
+---
+
+## Init-Time Safety (R-INIT)
+
+Rules for code that runs at module load or constructor time, before `enable()` is called.
+
+### R-INIT-01: Shell/GObject modification at init time (expanded)
+
+- **Severity**: blocking
+- **Checked by**: check-init.py
+- **Rule**: Must not create GObjects from any GI namespace (St, Clutter, Gio, GLib, GObject, Meta, Shell, Pango, Soup, Cogl, Atk, GdkPixbuf) at module scope or in `extension.js` constructors. GObject constructors in helper class constructors are not flagged — whether in separate files or in `extension.js` alongside the Extension class (runtime-only, instantiated from `enable()`). Constructor checks in `extension.js` only apply to the Extension class (identified by `extends Extension` or `export default class`). Shell globals are flagged everywhere. **Exemptions**: `GObject.registerClass()` (class registration, not instantiation), arrow function definitions (lazy evaluation), value types (`GLib.Bytes`, `GLib.Variant`, `GLib.DateTime`, `GLib.TimeZone`, `GLib.Regex`, `GLib.Uri`, `Cogl.Color`, `Clutter.Color`).
+- **Rationale**: GObjects created before enable() cannot be properly cleaned up; #1 rejection cause
+- **Fix**: Move all GObject creation to enable()
+- **Tested by**: `tests/fixtures/init-modification@test/`, `tests/fixtures/init-helper-constructor@test/`, `tests/fixtures/constructor-lifecycle-expanded@test/`, `tests/fixtures/init-helper-in-extension@test/`
+
+#### Example
+
+**Before** (violation):
+```javascript
+export default class MyExtension extends Extension {
+    constructor(metadata) {
+        super(metadata);
+        this._file = new Gio.File.new_for_path('/tmp');
+    }
+}
+```
+
+**After** (idiomatic):
+```javascript
+export default class MyExtension extends Extension {
+    enable() {
+        this._file = Gio.File.new_for_path('/tmp');
+    }
+    disable() {
+        this._file = null;
+    }
+}
+```
+
+---
+
+## Files — Extended (R-FILE, continued)
+
+### R-FILE-07: Missing Default Export
+- **Severity**: advisory
+- **Checked by**: check-lifecycle.py
+- **Rule**: extension.js missing `export default class` — required for GNOME 45+.
+- **Rationale**: GNOME 45 switched to ESM modules. Extensions must use `export default class` extending `Extension`.
+- **Fix**: Use `export default class MyExtension extends Extension { ... }` pattern.
+- **Tested by**: `tests/fixtures/lifecycle-basic@test/`
+
+---
+
+## AI Slop Signals — Extended (R-SLOP, continued)
+
+### R-SLOP-08: Hallucinated Meta/Shell APIs
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: Detects `Meta.Screen`, `Meta.Cursor`, `Shell.ActionMode.ALL`, `Shell.WindowTracker.get_default().get_active_window`.
+- **Rationale**: These APIs don't exist in GNOME Shell. LLMs hallucinate them from outdated docs or other frameworks.
+- **Fix**: Use `global.display`/`Meta.Display` instead of `Meta.Screen`. Check https://gjs-docs.gnome.org.
+- **Tested by**: `tests/fixtures/hallucinated-apis@test/`
+
+### R-SLOP-09: St Widget Setter Methods
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: `St.Button.set_label()`, `St.Label.set_text()`, `St.Widget.set_icon_name()` — setter methods don't exist.
+- **Rationale**: St widgets use GObject properties, not GTK-style setter methods.
+- **Fix**: Use property assignment: `button.label = 'text'` instead of `button.set_label('text')`.
+- **Tested by**: `tests/fixtures/hallucinated-apis@test/`
+
+### R-SLOP-10: Hallucinated Clutter Methods
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: `Clutter.Actor.show_all()`, `hide_all()`, `set_position()`, `set_size()` are GTK methods, not Clutter.
+- **Rationale**: LLMs confuse GTK and Clutter widget APIs.
+- **Fix**: Use `actor.show()`/`hide()` for visibility. Use `actor.set({x, y, width, height})` for geometry.
+- **Tested by**: `tests/fixtures/hallucinated-apis@test/`
+
+### R-SLOP-11: Non-idiomatic GLib.timeout_add_seconds_full
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: `GLib.timeout_add_seconds_full` is a C API name; GJS uses `GLib.timeout_add_seconds()`.
+- **Rationale**: LLMs confuse C API names with GJS binding names. The `_full` variant doesn't exist in GJS.
+- **Fix**: Use `GLib.timeout_add_seconds()`.
+- **Tested by**: `tests/fixtures/hallucinated-apis@test/`
+
+### R-SLOP-44: Non-idiomatic GLib.source_remove
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: `GLib.source_remove()` is a valid GI binding for C's `g_source_remove()`, but `GLib.Source.remove()` is the idiomatic GJS form.
+- **Rationale**: While `GLib.source_remove()` works, `GLib.Source.remove()` is what GNOME documentation and reviewers expect. LLMs often use the C-style name.
+- **Fix**: Use `GLib.Source.remove(id)`.
+- **Tested by**: `tests/fixtures/hallucinated-apis@test/`
+
+### R-SLOP-12: typeof super.destroy Guard
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: `typeof super.destroy === 'function'` check is unnecessary — super.destroy() always exists on GObject classes.
+- **Rationale**: Canonical AI slop signal identified in the GNOME AI policy blog post (December 2025).
+- **Fix**: Remove the typeof check and call `super.destroy()` directly.
+- **Tested by**: `tests/fixtures/hallucinated-apis@test/`
+
+#### Example
+
+**Before** (violation):
+```javascript
+destroy() {
+    if (this._timeoutId) {
+        GLib.Source.remove(this._timeoutId);
+        this._timeoutId = null;
+    }
+
+    if (typeof super.destroy === 'function')
+        super.destroy();
+}
+```
+
+**After** (idiomatic):
+```javascript
+destroy() {
+    if (this._timeoutId) {
+        GLib.Source.remove(this._timeoutId);
+        this._timeoutId = null;
+    }
+
+    super.destroy();
+}
+```
+
+### R-SLOP-13: Redundant instanceof this
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: `this instanceof ClassName` inside a class method is always true.
+- **Rationale**: Classic defensive programming pattern that AI generates unnecessarily.
+- **Fix**: Remove the redundant instanceof check.
+- **Tested by**: `tests/fixtures/hallucinated-apis@test/`
+
+### R-SLOP-16: Synchronous GLib.file_get_contents
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: Extension code should prefer `Gio.File.load_contents()` over `GLib.file_get_contents()`.
+- **Rationale**: `GLib.file_get_contents()` exists in GJS (GI binding for `g_file_get_contents`) but is synchronous — it blocks the main loop during file I/O. `Gio.File.load_contents()` is the idiomatic GJS approach and has an async variant (`load_contents_async`) that avoids blocking.
+- **Fix**: Use `const file = Gio.File.new_for_path(path); const [ok, contents] = file.load_contents(null);` then `new TextDecoder().decode(contents)` to get a string.
+
+### R-SLOP-17: typeof method guard on known objects
+- **Severity**: advisory
+- **Checked by**: patterns.yaml
+- **Rule**: `typeof super.method === 'function'` or `typeof this._obj.method === 'function'` is likely unnecessary when the object type is known.
+- **Rationale**: AI-generated code defensively checks if methods exist. In GObject hierarchies, inherited methods are always present. For typed sub-objects (e.g., `this._device`), the null check already suffices. Legitimate uses: checking optional methods on D-Bus proxies, duck-typing external interfaces.
+- **Fix**: Remove the typeof check. Use a null guard on the object instead, or comment if duck-typing is intentional.
+
+### R-SLOP-18: LLM prompt-style comments
+- **Severity**: advisory
+- **Checked by**: patterns.yaml
+- **Rule**: Comments starting with "Important:", "Note:", "Remember:" followed by imperative instructions ("Make sure", "Ensure", "Always") look like LLM prompt artifacts.
+- **Rationale**: EGO reviewers flag these as evidence of unreviewed AI output. Human developers write comments explaining "why", not "what to do".
+- **Fix**: Remove or rewrite to explain the rationale rather than giving instructions.
+
+### R-SLOP-19: Verbose template error messages
+- **Severity**: advisory
+- **Checked by**: patterns.yaml
+- **Rule**: Error messages like `` console.error(`Failed to ${action}...`) `` are verbose LLM-style patterns.
+- **Rationale**: GNOME extension error messages should be terse and actionable. Template-literal error strings that read like documentation are a strong AI signal.
+- **Fix**: Simplify to: `console.error('ExtName: init failed', e)`.
+
+### R-SLOP-22: Catch-log-rethrow anti-pattern
+- **Severity**: advisory
+- **Checked by**: patterns.yaml
+- **Rule**: Catching an error just to log it then rethrow adds no value.
+- **Rationale**: If the error will propagate anyway, the catch block is unnecessary. This is a common AI-generated "completeness" pattern.
+- **Fix**: Remove the try-catch or handle the error meaningfully.
+
+### R-SLOP-23: Dead code after throw
+- **Severity**: advisory
+- **Checked by**: patterns.yaml
+- **Rule**: Return statements after `throw` are unreachable dead code.
+- **Rationale**: AI generators sometimes add a defensive `return` after `throw` for "safety". The code is unreachable and reveals non-understanding of control flow.
+- **Fix**: Remove the unreachable return statement.
+
+---
+
+## Security — Extended (R-SEC, continued)
+
+### R-SEC-06: run_dispose Usage
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: `GObject.run_dispose()` should not be used unless absolutely necessary.
+- **Rationale**: `run_dispose()` forcefully disposes GObject resources and can cause issues if not used carefully.
+- **Fix**: Remove `run_dispose()` call. If genuinely needed, add a comment explaining why.
+- **Tested by**: `tests/fixtures/hallucinated-apis@test/`
+
+### R-SEC-08: No telemetry or analytics
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: Extension code must not contain telemetry, analytics, or user tracking code (`analytics`, `telemetry`, `trackEvent`, `trackPage`, `GA_TRACKING_ID`, `gtag`).
+- **Rationale**: Telemetry and analytics are explicitly banned in GNOME extensions. EGO reviewers will reject any extension that tracks user behavior.
+- **Fix**: Remove all telemetry/analytics code. EGO explicitly bans user tracking.
+
+### R-SEC-09: Extension system interference
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: Extension code should not use `Main.extensionManager`, `ExtensionManager`, or `lookupByUUID` to interact with or modify other extensions.
+- **Rationale**: Interfering with the extension system (enabling, disabling, or inspecting other extensions) is discouraged and requires explicit justification during EGO review.
+- **Fix**: Avoid interacting with other extensions unless absolutely necessary. If needed, document the justification clearly in the EGO submission.
+
+### R-SEC-10: No pip install
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py
+- **Rule**: Extension code and scripts must not run `pip install`.
+- **Rationale**: GNOME extensions must not automatically install packages. Automatic package installation is a security risk and a policy violation that will cause immediate EGO rejection. Extensions should be self-contained or document manual dependency installation steps.
+- **Fix**: Remove automatic `pip install` commands. If a Python dependency is needed, document the manual installation steps in the extension description or README.
+
+### R-SEC-11: No npm install
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py
+- **Rule**: Extension code and scripts must not run `npm install`.
+- **Rationale**: Same as R-SEC-10. Automatic package installation is banned. Extensions must not install npm packages at runtime or during setup scripts that run without explicit user action.
+- **Fix**: Remove automatic `npm install` commands. If a Node.js dependency is needed, document the manual installation steps.
+
+### R-SEC-12: No system package installation (apt/dnf/yum/pacman/zypper)
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py
+- **Rule**: Extension code and scripts must not run system package managers (`apt`, `apt-get`, `dnf`, `yum`, `pacman`, `zypper`).
+- **Rationale**: Same as R-SEC-10. Automatic system package installation requires root access and is a severe security risk. EGO reviewers will reject any extension that attempts to install system packages.
+- **Fix**: Remove automatic package installation commands. Document any required system packages in the extension description so users can install them manually.
+
+### R-SEC-13: String concatenation in subprocess args
+- **Severity**: blocking
+- **Checked by**: patterns.yaml
+- **Rule**: Subprocess commands must not use string concatenation to build arguments.
+- **Rationale**: String concatenation in subprocess arguments risks command injection. Same class of vulnerability as R-SEC-05 (`/bin/sh -c`).
+- **Fix**: Pass command and arguments as separate argv array elements instead of concatenating strings.
+
+### R-SEC-14: GLib.spawn_sync
+- **Severity**: blocking
+- **Checked by**: patterns.yaml
+- **Rule**: Must not use GLib.spawn_sync — blocks the main loop
+- **Rationale**: Wechsel was rejected for sync subprocess calls (April 2024)
+- **Fix**: Use `new Gio.Subprocess({argv: [...]})` with `communicate_utf8_async()` or `Gio._promisify`
+
+### R-SEC-15: GLib.spawn_command_line_async
+- **Severity**: advisory
+- **Checked by**: patterns.yaml
+- **Rule**: Prefer Gio.Subprocess over GLib.spawn_command_line_async
+- **Rationale**: spawn_command_line_async provides no error handling or lifecycle control
+- **Fix**: Use `new Gio.Subprocess({argv: [...]})` for proper error handling
+
+---
+
+## Code Quality Heuristics — Extended (R-QUAL, continued)
+
+### R-QUAL-10: Code Volume
+- **Severity**: advisory
+- **Checked by**: check-quality.py
+- **Rule**: Flags extensions with more than 8000 non-blank JS lines.
+- **Rationale**: Large codebases are harder to review and more likely to contain unreviewed AI-generated code.
+- **Fix**: Ensure all code is necessary and has been manually reviewed.
+- **Tested by**: `tests/fixtures/quality-signals@test/`
+
+### R-QUAL-11: Comment Density
+- **Severity**: advisory
+- **Checked by**: check-quality.py
+- **Rule**: Flags files where >50% of lines (after first 10) are comments.
+- **Rationale**: Excessive comments explaining obvious code is a strong AI slop signal.
+- **Fix**: Remove redundant comments. Only keep comments that explain non-obvious logic or API quirks.
+- **Tested by**: `tests/fixtures/quality-signals@test/`
+
+---
+
+## Metadata — Extended (R-META, continued)
+
+### R-META-16: Missing gettext-domain
+- **Severity**: advisory
+- **Checked by**: check-metadata.py
+- **Rule**: locale/ directory exists but gettext-domain not set in metadata.json.
+- **Rationale**: Without gettext-domain, translations in locale/ won't be used.
+- **Fix**: Add `"gettext-domain": "your-extension-name"` to metadata.json.
+- **Tested by**: `tests/fixtures/metadata-polish@test/`
+
+### R-META-17: Future shell-version
+- **Severity**: advisory
+- **Checked by**: check-metadata.py
+- **Rule**: shell-version entry newer than current stable (48).
+- **Rationale**: Speculative or AI-hallucinated shell versions indicate unreviewed metadata.
+- **Fix**: Only list shell versions that have been tested.
+- **Tested by**: `tests/fixtures/metadata-polish@test/`
+
+### R-META-18: Invalid donations field keys
+- **Severity**: blocking
+- **Checked by**: check-metadata.py
+- **Rule**: The `donations` field in `metadata.json` must only contain keys from the allowlist: `buymeacoffee`, `custom`, `github`, `kofi`, `liberapay`, `opencollective`, `patreon`, `paypal`.
+- **Rationale**: EGO validates the `donations` field and rejects extensions with unrecognized donation platform keys. Using an invalid key will prevent submission.
+- **Fix**: Use only the allowed keys. Remove any keys not in the allowlist (e.g., remove `"stripe"` or `"venmo"`).
+
+### R-META-19: Invalid session-modes value
+- **Severity**: blocking
+- **Checked by**: check-metadata.py
+- **Rule**: Each entry in the `session-modes` array must be either `"user"` or `"unlock-dialog"`.
+- **Rationale**: GNOME Shell only recognizes these two session modes. Any other value will be silently ignored or cause validation failure on EGO.
+- **Fix**: Remove invalid session-modes entries. Use `"user"` for normal desktop mode and `"unlock-dialog"` for lock screen access.
+
+### R-META-20: version-name format
+- **Severity**: blocking
+- **Checked by**: check-metadata.py
+- **Rule**: If present, the `version-name` field must be 1-16 characters, containing only alphanumeric characters, spaces, and dots, and must not consist entirely of dots or spaces.
+- **Rationale**: EGO validates the `version-name` format on upload. Values that are too long, contain special characters, or are blank will cause submission failure.
+- **Fix**: Use a short version label like `"1.0"`, `"2.1 beta"`, or `"v3"`. Remove the field entirely if not needed.
+
+### R-META-21: Invalid shell-version entry
+- **Severity**: blocking
+- **Checked by**: check-metadata.py
+- **Rule**: Each entry in the `shell-version` array must be a valid version string matching the format `"NN"` (e.g., `"45"`) or `"NN.NN"` (e.g., `"3.38"`).
+- **Rationale**: GNOME Shell validates version strings at install time. Invalid entries (empty strings, non-numeric values, trailing dots) will prevent the extension from loading.
+- **Fix**: Use valid version strings like `"45"`, `"46"`, `"47"`, `"48"`, or `"3.38"` for legacy versions.
+
+### R-META-22: Missing url field
+- **Severity**: blocking
+- **Checked by**: check-metadata.py
+- **Rule**: `metadata.json` must contain a `url` field.
+- **Rationale**: The `url` field is required for EGO submission. It is displayed on the listing page and helps users find the project homepage, documentation, and issue tracker. Missing `url` is a hard reject per EGO review guidelines.
+- **Fix**: Add `"url": "https://github.com/your-username/your-extension"` to `metadata.json`.
+
+### R-META-23: Too many development shell-version entries
+- **Severity**: blocking
+- **Checked by**: check-metadata.py
+- **Rule**: The `shell-version` array must not contain more than one development (unreleased) GNOME version.
+- **Rationale**: Development versions are versions newer than the current stable release (48). Listing multiple development versions is a strong indicator of AI-hallucinated metadata, since only one GNOME development version exists at any time. EGO will reject such submissions.
+- **Fix**: Remove extra development versions from `shell-version`. At most one development version (the current GNOME development branch) should be listed, and only if you have actually tested against it.
+
+### R-META-24: Empty donations field
+- **Severity**: blocking
+- **Checked by**: check-metadata.py
+- **Rule**: If the `donations` field is present in `metadata.json`, it must not be an empty object.
+- **Rationale**: An empty `donations` object (`"donations": {}`) serves no purpose and will be flagged by EGO validation. It is typically a leftover from AI-generated metadata templates.
+- **Fix**: Either add valid donation links (e.g., `"donations": {"github": "your-username"}`) or remove the `donations` field entirely.
+
+### R-META-25: ESM imports with pre-45 shell-version
+- **Severity**: blocking
+- **Checked by**: check-metadata.py
+- **Rule**: If `extension.js` uses ESM imports (`import ... from ...`), the `shell-version` array must not include GNOME versions before 45 (e.g., `"40"`, `"41"`, `"42"`, `"43"`, `"44"`).
+- **Rationale**: ESM modules were introduced in GNOME 45. Extensions using ESM syntax cannot run on GNOME 40-44, which used the legacy `imports.*` module system. Listing pre-45 versions with ESM code is contradictory and indicates untested compatibility claims.
+- **Fix**: Remove pre-45 versions from `shell-version` if your extension uses ESM imports. If you need to support older GNOME versions, you must use the legacy `imports.*` module system (or maintain separate branches).
+
+---
+
+## Package — Extended (R-PKG, continued)
+
+### R-PKG-12: gschemas.compiled in ZIP (GNOME 45+)
+- **Severity**: blocking
+- **Checked by**: check-package.sh
+- **Rule**: The submission zip must not contain `gschemas.compiled` when targeting GNOME 45+.
+- **Rationale**: Auto-reject: GNOME Shell 45+ automatically compiles schemas on installation. Including `gschemas.compiled` in the zip is unnecessary and indicates a build process issue. For extensions targeting only GNOME 44 or earlier, this is a warning rather than a blocking issue.
+- **Fix**: Remove `gschemas.compiled` from your zip package. Ensure your packaging script excludes it.
+- **Tested by**: `tests/fixtures/compiled-schemas-45plus@test/`
+
+### R-PKG-13: No binary files
+- **Severity**: blocking
+- **Checked by**: ego-lint.sh
+- **Rule**: Extensions must not include binary executables or shared libraries (`.so`, `.a`, `.o`, `.dll`, `.dylib`, `.wasm`, or ELF binaries).
+- **Rationale**: "Extensions MUST NOT include binary executables or libraries" — EGO Review Guidelines.
+- **Fix**: Remove all binary files. If native code is needed, provide build instructions or use GJS alternatives.
+- **Test fixture**: `binary-files@test`
+
+### R-PKG-14: No non-GJS scripts
+- **Severity**: advisory
+- **Checked by**: ego-lint.sh
+- **Rule**: Non-JavaScript scripts (`.py`, `.sh`, `.rb`, `.pl`) should not be shipped unless absolutely necessary.
+- **Rationale**: "Scripts MUST be written in GJS, unless required functionality is only available in another scripting language" — EGO Review Guidelines.
+- **Fix**: Rewrite scripts in GJS if possible. If a non-GJS script is required (e.g., polkit helper), document the justification.
+- **Test fixture**: `non-gjs-scripts@test`
+
+### R-PKG-15: No compiled schemas in directory
+- **Severity**: advisory
+- **Checked by**: ego-lint.sh
+- **Rule**: `schemas/gschemas.compiled` should not be present in the extension directory.
+- **Rationale**: GNOME Shell 44+ automatically compiles schemas on installation. Shipping compiled schemas is unnecessary and adds bloat.
+- **Fix**: Remove `schemas/gschemas.compiled` from the extension and exclude it from packaging.
+- **Test fixture**: `compiled-schemas-dir@test`
+
+---
+
+## Preferences (R-PREFS)
+
+Rules for `prefs.js` validation and EGO compliance.
+
+### R-PREFS-01: Dual prefs pattern
+- **Severity**: blocking
+- **Checked by**: check-prefs.py
+- **Rule**: `prefs.js` must not define both `getPreferencesWidget()` and `fillPreferencesWindow()`.
+- **Rationale**: These are mutually exclusive preference APIs. `getPreferencesWidget()` creates a standalone widget, while `fillPreferencesWindow()` populates an existing `Adw.PreferencesWindow`. Defining both indicates confusion about the prefs API and will cause unpredictable behavior. GNOME 45+ uses `fillPreferencesWindow()`.
+- **Fix**: Remove one of the two methods. For GNOME 45+, use `fillPreferencesWindow(window)` and add pages/groups to the provided window. For older versions, use `getPreferencesWidget()`.
+
+### R-PREFS-02: Missing default export
+- **Severity**: advisory
+- **Checked by**: check-prefs.py
+- **Rule**: `prefs.js` should use `export default class` extending `ExtensionPreferences`.
+- **Rationale**: GNOME 45 switched to ESM modules. The preferences entry point must use `export default class` extending `ExtensionPreferences` for the extension system to load it correctly.
+- **Fix**: Use `export default class MyPrefs extends ExtensionPreferences { ... }` pattern.
+
+### R-PREFS-03: Shell UI resource paths in prefs
+- **Severity**: blocking
+- **Checked by**: check-prefs.py
+- **Rule**: `prefs.js` must not import modules via `resource:///org/gnome/shell/ui/` paths.
+- **Rationale**: The preferences window runs in a separate GTK process that does not have access to GNOME Shell's UI modules. Importing Shell UI modules (e.g., `Main`, `PanelMenu`, `PopupMenu`) in `prefs.js` will cause an import error when the user opens preferences.
+- **Fix**: Use only GTK/Adw/Gio/GLib imports in `prefs.js`. Shell UI modules are only available in `extension.js` and its runtime imports.
+
+### R-PREFS-04: Raw GTK widgets in prefs instead of Adwaita
+- **Severity**: advisory
+- **Checked by**: patterns.yaml
+- **Rule**: `prefs.js` should use Adwaita (Adw) widgets rather than raw GTK widgets for GNOME 45+.
+- **Rationale**: The GNOME HIG prefers Adwaita widgets (PreferencesPage, PreferencesGroup, ActionRow, SwitchRow, ComboRow) which provide consistent styling and behavior. Raw GTK widgets (Box, Label, Switch, Grid, etc.) work but look inconsistent with other GNOME preferences dialogs.
+- **Fix**: Use `Adw.PreferencesPage`, `Adw.PreferencesGroup`, `Adw.ActionRow`, `Adw.SwitchRow`, `Adw.ComboRow` instead of raw GTK widget constructors.
+
+### R-PREFS-04b: GTK widgets with Adwaita replacements (advisory)
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: `prefs.js` uses GTK widgets that have direct Adwaita equivalents (Frame, ComboBoxText, RadioButton, Revealer, Expander, FlowBox, Overlay, Paned).
+- **Rationale**: These widgets have well-established Adwaita replacements that provide better visual consistency with other GNOME preferences dialogs.
+- **Fix**: `Gtk.Frame` → `Adw.PreferencesGroup`, `Gtk.ComboBoxText` → `Adw.ComboRow`, `Gtk.RadioButton` → `Adw.ActionRow`, `Gtk.Revealer`/`Gtk.Expander` → `Adw.ExpanderRow`, `Gtk.FlowBox` → `Adw.PreferencesGroup`.
+
+### R-PREFS-04c: GTK layout widgets in prefs (advisory)
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: `prefs.js` uses GTK layout widgets (Grid, ScrolledWindow, Stack, ListBox) that may or may not have Adwaita equivalents depending on usage.
+- **Rationale**: These widgets are often legitimate in Adwaita prefs: `Gtk.ListBox` with `boxed-list` CSS is the recommended pattern for dynamic lists, `Gtk.ScrolledWindow` is valid for constrained-height content, and `Gtk.Grid`/`Gtk.Stack` serve layout roles that Adwaita doesn't always cover. However, some usages do have Adwaita equivalents.
+- **Fix**: Verify your specific usage doesn't have an Adwaita equivalent. `Gtk.ListBox` with `boxed-list` CSS and `Gtk.ScrolledWindow` for constrained areas are generally fine.
+
+### R-PREFS-05: Prefs memory leak (GObject instances without cleanup)
+- **Severity**: advisory
+- **Checked by**: check-prefs.py
+- **Rule**: GObject instances stored as class properties in `prefs.js` without cleanup cause memory leaks.
+- **Rationale**: The preferences window can be opened and closed multiple times. GObject instances stored as class properties (e.g., `this._settings = new Gio.Settings(...)`) persist after the window closes, leaking memory on each open/close cycle.
+- **Fix**: Use local variables instead of class properties for GObject instances, or connect to the window's `close-request` signal to clean up stored references.
+- **Tested by**: `tests/fixtures/prefs-memory-leak@test/`
+
+---
+
+## Version Compatibility (R-VER)
+
+Rules for APIs removed or changed in specific GNOME Shell versions. These rules are **version-gated**: they only fire when the extension's `shell-version` in `metadata.json` targets the relevant GNOME version or newer. For example, R-VER46-01 only triggers if the extension lists GNOME 46 or later in `shell-version`.
+
+### GNOME 46 (R-VER46)
+
+### R-VER46-01: add_actor() removed
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py (version-gated, min-version: 46)
+- **Rule**: Extension code must not use `.add_actor()` when targeting GNOME 46+.
+- **Rationale**: `Clutter.Container.add_actor()` was removed in GNOME 46. It was the legacy method for adding child actors to containers. The replacement `add_child()` has been available since GNOME 3.x and is the standard method.
+- **Fix**: Replace `.add_actor(child)` with `.add_child(child)`.
+
+### R-VER46-02: remove_actor() removed
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py (version-gated, min-version: 46)
+- **Rule**: Extension code must not use `.remove_actor()` when targeting GNOME 46+.
+- **Rationale**: `Clutter.Container.remove_actor()` was removed in GNOME 46 alongside `add_actor()`. The replacement `remove_child()` has been available since GNOME 3.x.
+- **Fix**: Replace `.remove_actor(child)` with `.remove_child(child)`.
+
+### R-VER46-03: Clutter.cairo_set_source_color removed
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py (version-gated, min-version: 46)
+- **Rule**: Extension code must not use `Clutter.cairo_set_source_color()` when targeting GNOME 46+.
+- **Rationale**: The `Clutter.cairo_set_source_color()` helper function was removed in GNOME 46. Cairo color operations should use the cairo context's own methods instead.
+- **Fix**: Replace `Clutter.cairo_set_source_color(cr, color)` with `cr.setSourceColor(color)`.
+
+### R-VER46-04: Gio.UnixInputStream moved
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py (version-gated, min-version: 46)
+- **Rule**: Extension code must not use `Gio.UnixInputStream` when targeting GNOME 46+.
+- **Rationale**: In GNOME 46, Unix-specific I/O classes were moved from `Gio` to a separate `GioUnix` namespace. `Gio.UnixInputStream` no longer exists; it was relocated to `GioUnix.InputStream`.
+- **Fix**: Replace `import Gio from 'gi://Gio'` with `import GioUnix from 'gi://GioUnix'` and use `GioUnix.InputStream` instead of `Gio.UnixInputStream`.
+
+### R-VER46-05: ExtensionState enum renamed
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py (version-gated, min-version: 46)
+- **Rule**: Extension code must not use the old `ExtensionState` enum values (`ENABLED`, `DISABLED`, `INITIALIZED`, `DEACTIVATING`, `ACTIVATING`) when targeting GNOME 46+.
+- **Rationale**: The `ExtensionState` enum values were renamed in GNOME 46 to better reflect their meaning: `ENABLED` became `ACTIVE`, `DISABLED` became `INACTIVE`, `ACTIVATING` became `ENABLING`, and `DEACTIVATING` became `DISABLING`.
+- **Fix**: Replace `ExtensionState.ENABLED` with `ExtensionState.ACTIVE`, `DISABLED` with `INACTIVE`, `ACTIVATING` with `ENABLING`, and `DEACTIVATING` with `DISABLING`.
+- **Suppressed when**: File also contains `ExtensionState.ACTIVE` (backward-compat shim)
+
+### GNOME 47 (R-VER47)
+
+### R-VER47-01: Clutter.Color removed
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py (version-gated, min-version: 47)
+- **Rule**: Extension code must not use `Clutter.Color` when targeting GNOME 47+.
+- **Rationale**: `Clutter.Color` was removed in GNOME 47. Color handling was moved to the Cogl library, which is the underlying graphics layer.
+- **Fix**: Replace `Clutter.Color` with `Cogl.Color`. Import Cogl with `import Cogl from 'gi://Cogl'` and use `new Cogl.Color()`.
+
+### GNOME 48 (R-VER48)
+
+### R-VER48-01: Clutter.Image removed
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py (version-gated, min-version: 48)
+- **Rule**: Extension code must not use `Clutter.Image` when targeting GNOME 48+.
+- **Rationale**: `Clutter.Image` was removed in GNOME 48. Image content handling was moved to St (Shell Toolkit), which provides `St.ImageContent` as the replacement.
+- **Fix**: Replace `Clutter.Image` with `St.ImageContent`. St is already available in extension runtime, so no additional imports are needed.
+
+### R-VER48-02: Meta display functions moved to Meta.Compositor
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py (version-gated, min-version: 48)
+- **Rule**: Extension code must not call `Meta.disable_unredirect_for_display()`, `Meta.enable_unredirect_for_display()`, `Meta.get_window_actors()`, `Meta.get_window_group_for_display()`, or `Meta.get_top_window_group_for_display()` when targeting GNOME 48+.
+- **Rationale**: These display management functions were moved from the `Meta` namespace to `Meta.Compositor` in GNOME 48. They are now accessible via `global.compositor`.
+- **Fix**: Access these functions via `global.compositor` instead of `Meta` directly. For example, replace `Meta.get_window_actors()` with `global.compositor.get_window_actors()`.
+- **Guard**: Suppressed when `if (Meta.disable_unredirect` or `PACKAGE_VERSION >= '48'` appears within 10 lines
+- **Suppressed when**: File also contains `global.compositor` (backward-compat shim)
+
+### R-VER48-03: CursorTracker.get_for_display changed
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py (version-gated, min-version: 48)
+- **Rule**: Extension code must not use `CursorTracker.get_for_display()` when targeting GNOME 48+.
+- **Rationale**: `Meta.CursorTracker.get_for_display()` was changed in GNOME 48. The cursor tracker is now accessed through the backend object instead of the display.
+- **Fix**: Replace `Meta.CursorTracker.get_for_display(global.display)` with `global.backend.get_cursor_tracker()`.
+
+### R-VER48-04: St.Widget.vertical deprecated
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py (min-version: 48, fix-min-version: 47)
+- **Rule**: The `.vertical` property on St widgets is deprecated in GNOME 48.
+- **Rationale**: Will be removed around GNOME 50. The `orientation` property replacement is available since GNOME 47. For multi-version extensions targeting GNOME <=46, the fix cannot be applied unconditionally.
+- **Fix**: Use `{orientation: Clutter.Orientation.VERTICAL}` instead of `{vertical: true}`. Fix text is suppressed when the extension's minimum shell-version is below 47.
+
+### R-VER48-05: Shell.SnippetHook removed
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py (min-version: 48)
+- **Rule**: `Shell.SnippetHook` was removed in GNOME 48.
+- **Rationale**: The snippet hook API was moved or removed without a direct Shell-level replacement.
+- **Fix**: Check current Cogl/Clutter API for shader snippet hooks.
+
+### R-VER48-06: get_key_focus() behavior change on Wayland
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py (min-version: 48)
+- **Rule**: `Clutter.Stage.get_key_focus()` returns `null` on Wayland in GNOME 48 when no actor has focus (previously returned the stage itself).
+- **Rationale**: Extensions that check `get_key_focus() === stage` will break. Track focus via signals instead.
+- **Fix**: Use `'key-focus-in'` signal on the stage to track focus changes, or handle `null` return value.
+
+### GNOME 44 (R-VER44)
+
+### R-VER44-01: Meta.later_add() removed
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py (min-version: 44)
+- **Rule**: `Meta.later_add()` was removed in GNOME 44.
+- **Rationale**: Replaced by the new Laters API accessed via the compositor.
+- **Fix**: Use `global.compositor.get_laters().addLater(Meta.LaterType.BEFORE_REDRAW, callback)`.
+
+### R-VER44-02: Meta.later_remove() removed
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py (min-version: 44)
+- **Rule**: `Meta.later_remove()` was removed in GNOME 44.
+- **Rationale**: Replaced by the new Laters API accessed via the compositor.
+- **Fix**: Use `global.compositor.get_laters().removeLater(id)`.
+- **Guard**: Suppressed when `if (global.compositor)` appears within 7 preceding lines (version-compat if/else block).
+
+### R-VER46-06: Shell.BlurEffect.sigma replaced
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py (min-version: 46)
+- **Rule**: `Shell.BlurEffect.sigma` was replaced by `.radius` in GNOME 46.
+- **Rationale**: The blur API was unified. The conversion formula is `radius = sigma * 2.0`.
+- **Fix**: Use `.radius` instead of `.sigma`.
+
+### R-VER46-07: Clutter.Container removed
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py (min-version: 46)
+- **Rule**: `Clutter.Container` interface was removed in GNOME 46.
+- **Rationale**: The Container interface was merged into `Clutter.Actor`. All child management methods are now directly on Actor.
+- **Fix**: Use `Clutter.Actor` methods (`add_child`, `remove_child`) directly instead of the Container interface.
+
+### GNOME 49 (R-VER49)
+
+### R-VER49-01: Meta.Rectangle removed
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py (min-version: 49)
+- **Rule**: `Meta.Rectangle` was completely removed in GNOME 49.
+- **Rationale**: Replaced by the Mtk toolkit rectangle type.
+- **Fix**: Import `Mtk` from `'gi://Mtk'` and use `Mtk.Rectangle` instead.
+
+### R-VER49-02: Clutter.ClickAction removed
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py (min-version: 49)
+- **Rule**: `Clutter.ClickAction` was removed in GNOME 49.
+- **Rationale**: Replaced by the gesture-based input API.
+- **Fix**: Use `new Clutter.ClickGesture()` instead.
+- **Guard**: Suppressed when `|| Clutter.Click(Gesture|Action)` or `if (Clutter.ClickAction` appears on the same line
+- **Suppressed when**: File also contains `Clutter.ClickGesture` (backward-compat shim)
+
+### R-VER49-03: Clutter.TapAction removed
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py (min-version: 49)
+- **Rule**: `Clutter.TapAction` was removed in GNOME 49.
+- **Rationale**: Replaced by the gesture-based input API.
+- **Fix**: Use `new Clutter.LongPressGesture()` instead.
+
+### R-VER49-04: Meta.Window.get_maximized() removed
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py (min-version: 49)
+- **Rule**: `Meta.Window.get_maximized()` was removed in GNOME 49.
+- **Rationale**: Simplified window state API.
+- **Fix**: Use `window.is_maximized()` instead.
+
+### R-VER49-05: CursorTracker.set_pointer_visible() removed
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py (min-version: 49)
+- **Rule**: `CursorTracker.set_pointer_visible()` was removed in GNOME 49.
+- **Rationale**: Replaced by inhibit/uninhibit pattern.
+- **Fix**: Use `tracker.inhibit_cursor_visibility()` / `uninhibit_cursor_visibility()`.
+
+---
+
+## Code Quality Heuristics — Extended (R-QUAL, continued)
+
+### quality/file-complexity: Per-file line count
+- **Severity**: advisory
+- **Checked by**: check-quality.py
+- **Rule**: Warns if any single `.js` file exceeds 1000 non-blank lines.
+- **Rationale**: Monolithic files are harder to review and maintain. EGO reviewers often suggest splitting large files into modules.
+- **Fix**: Split large files into focused modules in a `lib/` directory.
+
+### quality/debug-volume: Excessive console.debug() calls
+- **Severity**: advisory
+- **Checked by**: check-quality.py
+- **Rule**: Warns if more than 15 `console.debug()` calls are found across the codebase.
+- **Rationale**: While `console.debug()` is acceptable (unlike `console.log()`), excessive debug logging clutters the system journal and signals unfinished development.
+- **Fix**: Remove or reduce debug logging to essential messages before submission.
+
+### quality/notification-volume: Excessive Main.notify() calls
+- **Severity**: advisory
+- **Checked by**: check-quality.py
+- **Rule**: Warns if more than 3 `Main.notify()` call sites are found.
+- **Rationale**: Excessive system notifications are intrusive to users and reviewers push back on notification-heavy extensions.
+- **Fix**: Reduce notification frequency; consider using the extension's own UI for status updates.
+
+### quality/private-api: Private GNOME Shell API access
+- **Severity**: advisory
+- **Checked by**: check-quality.py
+- **Rule**: Detects access to underscore-prefixed properties on GNOME Shell objects (`Main.panel._*`, `statusArea._*`, `quickSettings._*`, etc.).
+- **Rationale**: Private APIs can break without notice between GNOME versions. Reviewers require justification and version pinning for private API usage.
+- **Fix**: Document why the private API is necessary, which GNOME versions it was tested on, and pin `shell-version` accordingly.
+
+### quality/gettext-pattern: Direct Gettext.dgettext() usage
+- **Severity**: advisory
+- **Checked by**: check-quality.py
+- **Rule**: Warns when `Gettext.dgettext()` is used directly instead of the Extension API.
+- **Rationale**: The `Extension` and `ExtensionPreferences` base classes provide `this.gettext()` which automatically uses the correct domain. Direct `dgettext` hardcodes the domain string.
+- **Fix**: Use `this.gettext('string')` from the Extension base class instead of `Gettext.dgettext('domain', 'string')`.
+
+### R-QUAL-17: Total logging volume
+- **Severity**: advisory
+- **Checked by**: check-quality.py
+- **Rule**: Extensions should not have more than 30 total `console.*` calls (debug, warn, error, info combined).
+- **Rationale**: "Extension MUST NOT print excessively to the log" — EGO Review Guidelines. Reviewers reject extensions with excessive logging.
+- **Fix**: Remove verbose logging. Keep only essential error messages and critical state transitions.
+- **Test fixture**: `logging-volume@test`
+
+---
+
+## Metadata — Extended (R-META, continued)
+
+### metadata/session-modes-consistency: SessionMode usage without declaration
+- **Severity**: advisory
+- **Checked by**: check-metadata.py
+- **Rule**: Warns if the extension code references `Main.sessionMode.currentMode` but `metadata.json` does not declare `session-modes` with `unlock-dialog`. Note: `sessionMode.isLocked` is exempt — reading lock state is a defensive guard, not evidence of lock screen usage.
+- **Rationale**: Code that checks session mode without the proper declaration is either dead code (the extension won't run in lock screen mode) or a misunderstanding of the lifecycle.
+- **Fix**: Either add `"session-modes": ["user", "unlock-dialog"]` to metadata.json, or remove the session mode checks from the code.
+
+---
+
+## Inline Checks (ego-lint.sh)
+
+### polkit-files: Polkit policy/rules file detection
+- **Severity**: advisory
+- **Checked by**: ego-lint.sh
+- **Rule**: Detects `.policy` and `.rules` files in the extension directory.
+- **Rationale**: Polkit policy files grant privilege escalation capabilities and require careful security review. Reviewers pay special attention to extensions shipping polkit rules.
+- **Fix**: Document why polkit access is necessary. Ensure policy defaults use `auth_admin_keep` (not `yes`). Include reviewer notes explaining the privilege escalation model.
+
+---
+
+## Cross-File Resource Tracking (check-resources.py)
+
+### resource-tracking/orphan-signal
+- **Severity**: advisory
+- **Checked by**: check-resources.py → build-resource-graph.py
+- **Rule**: Signal connected in a child module but never disconnected in its destroy chain.
+- **Rationale**: The parent owns this module but the signal will leak after disable().
+- **Fix**: Add `.disconnect(handlerId)` or `.disconnectObject(this)` in the module's `destroy()` method.
+
+### resource-tracking/orphan-timeout
+- **Severity**: advisory
+- **Checked by**: check-resources.py → build-resource-graph.py
+- **Rule**: Timeout/idle source created in a child module without `GLib.Source.remove()` in destroy chain.
+- **Fix**: Store the source ID and call `GLib.Source.remove(id)` in `destroy()`.
+
+### resource-tracking/orphan-widget
+- **Severity**: advisory
+- **Checked by**: check-resources.py → build-resource-graph.py
+- **Rule**: Widget created in a child module without `.destroy()` in destroy chain.
+- **Fix**: Call `widget.destroy()` then null the reference in `destroy()`.
+
+### resource-tracking/orphan-filemonitor
+- **Severity**: advisory
+- **Checked by**: check-resources.py → build-resource-graph.py
+- **Rule**: File monitor created without `.cancel()` in destroy chain.
+- **Fix**: Call `monitor.cancel()` then null the reference in `destroy()`.
+
+### resource-tracking/orphan-dbus
+- **Severity**: advisory
+- **Checked by**: check-resources.py → build-resource-graph.py
+- **Rule**: D-Bus proxy signals not disconnected in destroy chain.
+- **Fix**: Disconnect all signal handlers from the proxy in `destroy()`.
+
+### resource-tracking/orphan-gsettings
+- **Severity**: advisory
+- **Checked by**: check-resources.py → build-resource-graph.py
+- **Rule**: GSettings connections not disconnected in destroy chain.
+- **Fix**: Call `settings.disconnectObject(this)` or manual `.disconnect(id)` in `destroy()`.
+
+### resource-tracking/no-destroy-method
+- **Severity**: advisory
+- **Checked by**: check-resources.py → build-resource-graph.py
+- **Rule**: Module creates resources but has no recognized cleanup method.
+- **Recognized cleanup methods**: `destroy()`, `disable()`, `_destroy*()`, `onDestroy()`, `disconnect_all()`, `cleanup()`, `_cleanup*()`, `close()`, `shutdown()`, `dispose()`, `release()`.
+- **Fix**: Add a `destroy()` method that cleans up all resources, or use `onDestroy()` connected via `this.connect('destroy', this.onDestroy.bind(this))`.
+- **Note**: Also suppressed when the parent calls any method on the child ref (e.g., `this._helper.disconnect_all()`) or nulls it inside a cleanup method body, or when the parent adds the child as an actor child/effect via `add_child()` / `add_effect()` (auto-cleanup by actor lifecycle).
+
+### resource-tracking/destroy-not-called
+- **Severity**: advisory
+- **Checked by**: check-resources.py → build-resource-graph.py
+- **Rule**: Module has a `destroy()` method but its parent/owner never calls it.
+- **Fix**: Call `this._ref.destroy()` in the parent's `disable()` or `destroy()` method.
+- **Note**: Parent cleanup recognition matches both `.destroy()` and `.disable()` calls on child refs. Multi-component extensions that use `this._component.disable()` for teardown are correctly tracked.
+
+---
+
+## Lifecycle (R-LIFE) — continued
+
+### R-LIFE-13: No selective disable
+- **Severity**: blocking
+- **Checked by**: check-lifecycle.py
+- **Rule**: `disable()` must not conditionally skip cleanup via early returns like `if (condition) return;`.
+- **Rationale**: Extensions MUST NOT disable selectively. All resources must be cleaned up every time disable() is called, regardless of session mode, enabled state, or other conditions. Selective disable causes leaked resources on enable/disable cycles.
+- **Fix**: Remove conditional returns from `disable()`. If different code paths create different resources, use null guards (`this._x?.destroy()`) instead of skipping cleanup entirely.
+- **Tested by**: `tests/fixtures/selective-disable@test/`, `tests/fixtures/conditional-null-guard@test/` (negative)
+
+### R-LIFE-14: unlock-dialog comment in disable()
+- **Severity**: advisory
+- **Checked by**: check-lifecycle.py
+- **Rule**: If `metadata.json` declares `session-modes` including `unlock-dialog`, `disable()` should contain a comment explaining lock screen behavior.
+- **Rationale**: EGO reviewers require documentation of why lock screen support is needed and how the extension handles mode transitions. A comment helps the reviewer understand the design intent.
+- **Fix**: Add a `//` comment in `disable()` explaining which resources need special handling during lock screen transitions, e.g., `// Disconnect keyboard signals during unlock-dialog to prevent input leakage`.
+- **Tested by**: `tests/fixtures/unlock-no-comment@test/`, `tests/fixtures/unlock-with-comment@test/` (negative)
+
+### R-LIFE-15: Soup.Session.abort() missing in disable()
+- **Severity**: advisory
+- **Checked by**: check-lifecycle.py
+- **Rule**: If `Soup.Session` is created and used for HTTP requests, `session.abort()` should be called in `disable()` to cancel in-flight requests.
+- **Rationale**: In-flight HTTP requests continue after `disable()` if the session is not aborted. Their callbacks will execute on torn-down state, causing errors or zombie behavior.
+- **Fix**: Add `this._session.abort()` before nullifying the session reference in `disable()`.
+- **Tested by**: `tests/fixtures/soup-session-no-abort@test/`
+
+### R-LIFE-22: Stage/chrome actor leak (add without remove)
+- **Severity**: blocking
+- **Checked by**: check-lifecycle.py
+- **Rule**: `global.stage.add_child()`, `Main.layoutManager.addTopChrome()`, and `Main.layoutManager.addChrome()` must have a matching removal (`remove_child`/`removeTopChrome`/`removeChrome`) or `.destroy()` in `disable()`/`destroy()`. Only tracks `this._xxx` patterns.
+- **Rationale**: Actors added to `global.stage` or the layout manager chrome persist on the compositor stage across enable/disable cycles. Unlike container widgets that are destroyed with their parent, stage children must be explicitly removed or they leak — causing visible artifacts and memory growth. Nulling the reference (`this._actor = null`) does NOT remove the actor from the stage.
+- **Fix**: In `disable()`, call `global.stage.remove_child(this._actor); this._actor.destroy(); this._actor = null;` or just `this._actor.destroy()` (destroying a Clutter actor removes it from its parent).
+- **Tested by**: `tests/fixtures/stage-add-child@test/`, `tests/fixtures/stage-add-child-clean@test/` (negative)
+- **Supersedes**: R-LIFE-19 (advisory pattern rule)
+
+### R-LIFE-24: MessageTray source leak (add without destroy)
+- **Severity**: advisory
+- **Checked by**: check-lifecycle.py
+- **Rule**: `Main.messageTray.add(this._source)` must have a matching `this._source.destroy()` in `disable()`/`destroy()`. Only tracks `this._xxx` patterns.
+- **Rationale**: Notification sources added to the message tray persist if not explicitly destroyed. While lower impact than stage actor leaks (notifications expire and sources may be GC'd), they can accumulate across enable/disable cycles.
+- **Fix**: In `disable()`, call `this._source.destroy(); this._source = null;`.
+- **Tested by**: `tests/fixtures/messagetray-source-leak@test/`
+
+### R-LIFE-25: D-Bus proxy signal leak (connectSignal without disconnectSignal)
+- **Severity**: blocking (bare connects), advisory (stored IDs without disconnect)
+- **Checked by**: check-lifecycle.py
+- **Rule**: Two tiers of detection:
+  - **Bare connects** (FAIL): `proxy.connectSignal('...')` where the return value is not stored (no `=` or `.push()` before `.connectSignal` on the line). These are always leaks — you cannot call `disconnectSignal(id)` without having stored `id`. Not masked by `disconnectSignal()` elsewhere.
+  - **Stored without disconnect** (WARN): `connectSignal()` return values are stored but no `disconnectSignal()` call exists in the same file (per-file scoping). GObject cleanup mechanisms (`connectObject`, `disconnectObject`, `SignalTracker`, `connectSmart`) do NOT clean up D-Bus proxy signals and are not considered valid cleanup. `.disconnectSignal.bind()` is recognized as valid cleanup.
+- **Rationale**: Without a stored signal ID, there is no way to call `proxy.disconnectSignal(id)` later. These D-Bus signal handlers accumulate across enable/disable cycles, causing duplicate callbacks and memory leaks. This is distinct from GObject `.connect()` — `connectSignal()` is specific to `Gio.DBusProxy` for subscribing to D-Bus signals (e.g., `PropertiesChanged`, `NameOwnerChanged`).
+- **Fix**: Store the return value and call `proxy.disconnectSignal(id)` in `disable()`.
+- **Scope exclusions**: prefs.js (manages own lifecycle), `service/` directory (daemon lifecycle).
+- **Known limitations**: Multi-line `.connectSignal(\n'...'` calls are not detected (per-line scanning).
+- **Tested by**: `tests/fixtures/dbus-signal-leak@test/`, `tests/fixtures/dbus-signal-auto-cleanup@test/`, `tests/fixtures/dbus-signal-array-storage@test/`, `tests/fixtures/dbus-signal-mixed-cleanup@test/`, `tests/fixtures/dbus-signal-stored-no-disconnect@test/`, `tests/fixtures/dbus-signal-bind-cleanup@test/`
+
+### R-LIFE-26: Module-scope mutable state not cleared in disable()
+- **Severity**: advisory
+- **Checked by**: check-lifecycle.py
+- **Rule**: Module-scope `new Map()` or `new Set()` declarations must have a matching `.clear()` call in `disable()` or `destroy()`.
+- **Rationale**: Module-scope collections persist across enable/disable cycles. Without clearing, state accumulates on each re-enable, causing memory leaks and stale data bugs. Unlike instance properties (`this._map`), module-scope variables are shared across all instances and survive the full extension lifecycle.
+- **Fix**: Add `varName.clear()` to `disable()` for each module-scope Map/Set.
+- **Scope exclusions**: prefs.js (manages own lifecycle), `service/` directory (daemon lifecycle). `WeakMap`/`WeakSet` are exempt (GC-friendly — entries are automatically collected when keys become unreachable).
+- **Known limitations**: Only detects direct `const/let/var x = new Map()` at module scope (brace depth 0). Destructured or factory-created collections not detected. Multi-file module-scope state (imported from another module) not tracked.
+- **Tested by**: `tests/fixtures/module-scope-state@test/`, `tests/fixtures/module-scope-state-cleared@test/`
+
+### R-LIFE-27: Module-scope prototype mutation
+- **Severity**: advisory
+- **Checked by**: check-lifecycle.py
+- **Rule**: `.prototype.` assignments, `Object.assign(...prototype, ...)`, and function calls passing `.prototype` as an argument at module scope (brace depth 0) are flagged.
+- **Rationale**: Module-scope prototype mutations execute at import time, before `enable()` is called. They persist after `disable()` because they were never part of the enable/disable lifecycle. This permanently mutates shared global objects, affecting all code that uses those prototypes. Indirect mutations via function calls (e.g., `_promisify(Gio.DBusConnection.prototype)`) are equally dangerous since the prototype is mutated inside the called function.
+- **Fix**: Move prototype mutations into `enable()` and restore the original methods in `disable()`.
+- **Scope exclusions**: prefs.js (manages own lifecycle), `service/` directory (daemon lifecycle). Safe patterns excluded: comparisons (`===`, `!==`), `instanceof`, `Object.create`, `Object.getPrototypeOf`, `Gio._promisify` (handled by R-QUAL-33).
+- **Tested by**: `tests/fixtures/prototype-mutation@test/`
+
+### R-LIFE-20: Bus name ownership without release
+- **Severity**: advisory
+- **Checked by**: check-lifecycle.py
+- **Rule**: `Gio.bus_own_name()` or `.own_name()` must have a matching `bus_unown_name()` / `.unown_name()`.
+- **Rationale**: D-Bus bus names claimed with `bus_own_name()` persist after `disable()` if not explicitly released. This prevents other extensions or future enable() cycles from claiming the same name, and leaks the associated D-Bus service.
+- **Fix**: In `disable()`, call `Gio.bus_unown_name(this._ownerId)`.
+- **Tested by**: `tests/fixtures/bus-name-leak@test/`
+
+### R-LIFE-21: GSettings signal leak (bare connect without disconnect)
+- **Severity**: blocking
+- **Checked by**: check-lifecycle.py
+- **Rule**: `settings.connect('changed::...')` calls where the return value is not stored (no `=` or `.push()` before `.connect` on the line) and no auto-cleanup mechanism (`disconnectObject`, `connectObject`, `SignalTracker`, `connectSmart`) is present in the **same file**.
+- **Rationale**: Without a stored signal ID, there is no way to call `.disconnect(id)` later. These handlers accumulate across enable/disable cycles, causing duplicate callbacks, memory leaks, and potential crashes. This is the highest-impact gap found in field testing — 4 of 10 extensions had this issue.
+- **Fix**: Use `connectObject()` (recommended — auto-disconnects via `disconnectObject(this)` in disable) or store the return value and call `disconnect(id)` in `disable()`.
+- **Scope exclusions**: prefs.js (manages own lifecycle), `service/` directory (daemon lifecycle).
+- **Auto-cleanup detection**: Per-file (not extension-wide). `connectObject`/`disconnectObject` in a helper file does not suppress bare `.connect()` findings in other files, because signal ownership is per-object-per-owner.
+- **Known limitations**: Multi-line `.connect(\n'changed::...'` calls are not detected (per-line scanning).
+- **Tested by**: `tests/fixtures/gsettings-bare-connect@test/`, `tests/fixtures/gsettings-auto-cleanup@test/`, `tests/fixtures/gsettings-array-storage@test/`, `tests/fixtures/gsettings-cross-file-leak@test/`
+
+### R-LIFE-23: .destroy without parentheses
+- **Severity**: advisory
+- **Checked by**: check-lifecycle.py
+- **Rule**: `.destroy` must be called as a method (`.destroy()`), not accessed as a property (`.destroy`).
+- **Rationale**: In JavaScript, `obj.destroy` without parentheses is a property access that evaluates to the function object but does not call it. The object is never destroyed, causing a silent resource leak. This is a common typo, especially in `forEach` callbacks: `actors.forEach(a => a.destroy)` does nothing.
+- **Fix**: Add parentheses: `actors.forEach(a => a.destroy())`.
+- **Not matched**: `.destroy()` and `.destroy?.()` (actual calls), `.destroyAll()` etc. (different methods) are excluded by the primary regex pattern.
+- **Suppressed when**:
+  - `connect`/`connectSmart`/`connectObject(` before `.destroy` (callback reference, but not `disconnect()`)
+  - `.bind(`/`.call(`/`.apply(` before or after `.destroy` (Function.prototype reference)
+  - `.destroy` inside an `if()` condition or preceded by `typeof` (existence check)
+  - Followed by `=` but not `==` (property assignment)
+  - `{ destroy }` on the same line (destructuring)
+  - Ternary `?` after `.destroy` but not `?.` (existence check)
+- **Tested by**: `tests/fixtures/destroy-no-call@test/`
+
+---
+
+## Security (R-SEC) — continued
+
+### R-SEC-16: Clipboard + keybinding cross-reference
+- **Severity**: advisory
+- **Checked by**: check-lifecycle.py
+- **Rule**: If both `St.Clipboard` and `addKeybinding()` appear in the same file, reviewers will scrutinize for keylogger patterns.
+- **Rationale**: Extensions MUST NOT ship default keyboard shortcuts for clipboard interaction. A keybinding that triggers clipboard access could be used to intercept user input.
+- **Fix**: Ensure clipboard access is user-initiated (button click, menu action), not triggered by a global keybinding. If a keybinding is genuinely needed, document the use case.
+- **Tested by**: `tests/fixtures/clipboard-keybinding@test/`
+
+### R-SEC-17: No hardcoded /tmp paths
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: `Gio.File.new_for_path('/tmp...')` should use `GLib.get_tmp_dir()` or XDG cache directories instead.
+- **Rationale**: Hardcoded `/tmp` paths are a security risk (symlink attacks, world-readable data). Using `GLib.get_tmp_dir()` or `GLib.get_user_cache_dir()` follows XDG conventions and is safer.
+- **Fix**: Replace `Gio.File.new_for_path('/tmp/...')` with `Gio.File.new_for_path(GLib.get_tmp_dir() + '/...')` or `GLib.get_user_cache_dir()`.
+
+---
+
+## Init-Time Safety (R-INIT) — continued
+
+### R-INIT-02: Gio._promisify() placement
+- **Severity**: advisory
+- **Checked by**: check-init.py
+- **Rule**: `Gio._promisify()` should be called at module scope, not inside `enable()`.
+- **Rationale**: `Gio._promisify()` is idempotent but cannot be undone — it permanently modifies the prototype of the target class. Placing it in `enable()` is misleading (suggests it's enable-scoped) and wastes cycles on repeated enable/disable. Module scope is the correct location.
+- **Fix**: Move `Gio._promisify(...)` calls to the top of the file, after imports and before the class definition.
+- **Tested by**: `tests/fixtures/promisify-in-enable@test/`
+
+---
+
+## Quality (R-QUAL) — continued
+
+### R-QUAL-21: run_dispose() without comment
+- **Severity**: advisory
+- **Checked by**: check-quality.py
+- **Rule**: Every `run_dispose()` call should have an adjacent comment explaining why it is necessary.
+- **Rationale**: `run_dispose()` is a low-level GObject method that most extensions should not need. EGO reviewers require justification when it is used, because misuse can cause double-free bugs or premature signal disconnection.
+- **Fix**: Add a `//` comment on the preceding line or inline explaining why `run_dispose()` is needed, e.g., `// Force immediate GSettings signal disconnection`.
+- **Tested by**: `tests/fixtures/run-dispose-no-comment@test/`
+
+### R-QUAL-22: Clipboard disclosure in metadata
+- **Severity**: advisory
+- **Checked by**: check-quality.py
+- **Rule**: If the extension uses `St.Clipboard`, the `description` field in `metadata.json` should mention clipboard access.
+- **Rationale**: EGO requires clipboard access to be disclosed in the extension description. Undisclosed clipboard usage will be flagged during review and may delay approval.
+- **Fix**: Add a note to the `description` field in `metadata.json`, e.g., "This extension reads from the system clipboard."
+
+---
+
+## CSS (R-CSS)
+
+### css/shell-class-override: Shell theme class override
+- **Severity**: advisory
+- **Checked by**: check-css.py
+- **Rule**: Top-level CSS selectors should not directly override known GNOME Shell theme classes (`.panel-button`, `.popup-menu`, etc.) without scoping.
+- **Rationale**: Overriding Shell theme classes affects ALL instances of that class, not just the extension's widgets. This can break other extensions and the Shell UI itself. Using a scoped selector (`.my-extension .panel-button`) limits the override to the extension's own widgets.
+- **Fix**: Wrap the overriding rule in a scoped parent selector, e.g., `.my-extension .panel-button { ... }`.
+- **Tested by**: `tests/fixtures/shell-class-override@test/`
+
+---
+
+## Preferences (R-PREFS) — continued
+
+### prefs/missing-prefs-method: Missing prefs method
+- **Severity**: advisory
+- **Checked by**: check-prefs.py
+- **Rule**: If `prefs.js` exists, it must define either `fillPreferencesWindow()` or `getPreferencesWidget()`.
+- **Rationale**: Without one of these methods, the preferences window will be empty. GNOME Shell calls one of these methods to populate the preferences UI.
+- **Fix**: Implement `fillPreferencesWindow(window)` (preferred for GNOME 45+) or `getPreferencesWidget()` in your `ExtensionPreferences` subclass.
+- **Tested by**: `tests/fixtures/prefs-no-method@test/`
+
+---
+
+## AI Slop (R-SLOP) — continued
+
+### R-SLOP-24: new Gio.Settings() instead of this.getSettings()
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: `new Gio.Settings()` should not be used in GNOME 45+ extensions.
+- **Rationale**: The `Extension` base class provides `this.getSettings()` which uses the correct schema path automatically. Manually constructing `Gio.Settings` requires specifying the schema ID and may use the wrong compiled schema path.
+- **Fix**: Use `this.getSettings()` in the Extension subclass, or pass a schema ID: `this.getSettings('org.gnome.shell.extensions.my-ext')`.
+- **Guard**: Suppressed when `schema.*org.gnome.` (excluding `shell.extensions.`), string-literal-anchored system schema substrings (`'desktop.` or `"desktop.`), bare `shell.app-switcher`, or enumerated system-schema constants (`KEYBINDINGS_SCHEMA`, `NOTIFICATIONS_SCHEMA`, `DESKTOP_SCHEMA`, `INTERFACE_SCHEMA`, `WM_SCHEMA`, `MUTTER_SCHEMA`, `APP_SWITCHER_SCHEMA`) appear on the match line or within a 5-line forward window. The `desktop.` anchor requires a quote prefix to avoid matching property-access contexts like `this.desktop.theme`. Also skipped in `service/` directories.
+
+### R-SLOP-25: Main.extensionManager.enable/disable
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: `Main.extensionManager.enable()` and `.disable()` are hallucinated APIs.
+- **Rationale**: Extensions cannot programmatically enable or disable themselves or other extensions. The extension lifecycle is managed by GNOME Shell and the user.
+- **Fix**: Remove the call. If the extension needs to react to state changes, use `Main.extensionManager.connect('extension-state-changed', ...)`.
+
+### R-SLOP-26: Shell.ActionMode.ALL
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: `Shell.ActionMode.ALL` does not exist in the GNOME Shell API.
+- **Rationale**: AI models generate this non-existent constant. The actual values are `Shell.ActionMode.NORMAL`, `Shell.ActionMode.OVERVIEW`, `Shell.ActionMode.LOCK_SCREEN`, etc. You can combine modes with bitwise OR.
+- **Fix**: Use `Shell.ActionMode.NORMAL` for most keybindings, or combine modes: `Shell.ActionMode.NORMAL | Shell.ActionMode.OVERVIEW`.
+
+---
+
+## Internationalization (R-I18N)
+
+### R-I18N-01: Template literal inside gettext
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: `_(\`...\${var}...\`)` — template literals inside `_()` break xgettext extraction.
+- **Rationale**: The `xgettext` tool that extracts translatable strings cannot parse JavaScript template literals. Strings wrapped in `_(\`...\`)` will not appear in the `.pot` file and will never be translated.
+- **Fix**: Use `_('Found %d items').format(count)` instead of `_(\`Found \${count} items\`)`.
+
+### R-I18N-02: String concatenation inside gettext
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: `_('Hello ' + name)` — string concatenation inside `_()` breaks xgettext extraction.
+- **Rationale**: The `xgettext` tool extracts the concatenated partial string (e.g., `'Hello '`) rather than the full translatable string. Translators see incomplete fragments, and the translations will never match at runtime.
+- **Fix**: Use `_('Hello %s').format(name)` instead of `_('Hello ' + name)`.
+
+---
+
+## Version Compatibility (R-VER49) — continued
+
+### R-VER49-06: Clutter.DragAction removed in GNOME 49
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py (min-version: 49)
+- **Rule**: `Clutter.DragAction` has been removed in GNOME 49.
+- **Rationale**: GNOME 49 replaced action-based input handling with gesture-based APIs. `DragAction` no longer exists.
+- **Fix**: Use `new Clutter.DragGesture()` instead.
+
+### R-VER49-07: Clutter.SwipeAction removed in GNOME 49
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py (min-version: 49)
+- **Rule**: `Clutter.SwipeAction` has been removed in GNOME 49.
+- **Rationale**: Same as R-VER49-06 — the action-to-gesture migration in GNOME 49.
+- **Fix**: Use `new Clutter.SwipeGesture()` instead.
+
+---
+
+## Prototype Override Detection
+
+### lifecycle/prototype-override
+- **Severity**: advisory
+- **Checked by**: check-lifecycle.py (enhanced R-LIFE-10)
+- **Rule**: Direct prototype modifications (`SomeClass.prototype.method = ...` or `Object.assign(SomeClass.prototype, ...)`) must be restored in `disable()`.
+- **Rationale**: Monkey-patching prototypes without restoration causes the patch to persist across enable/disable cycles. This affects all instances of the patched class, not just the extension's own objects.
+- **Fix**: Use `InjectionManager` (preferred), or save the original method in `enable()` and restore it in `disable()`. See the [GNOME Shell InjectionManager documentation](https://gjs.guide/extensions/).
+- **Tested by**: `tests/fixtures/manual-prototype-override@test/`
+
+---
+
+## GNOME 48/49 Version-Gated Rules (New)
+
+### R-VER48-07: QuickMenuToggle CSS class rename
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py (min-version: 48)
+- **Rule**: The CSS class `.quick-menu-toggle` was renamed to `.quick-toggle-has-menu` in GNOME 48.
+- **Rationale**: Extensions targeting GNOME 48+ that use the old class name will have broken styling.
+- **Fix**: Replace `.quick-menu-toggle` with `.quick-toggle-has-menu` in stylesheet.css.
+- **Tested by**: `tests/fixtures/gnome48-css-compat@test/`
+
+### R-VER49-08: Meta.Window.maximize() signature change
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py (min-version: 49)
+- **Rule**: `maximize()` lost the `MaximizeFlags` parameter in GNOME 49.
+- **Rationale**: Passing `MaximizeFlags` to `maximize()` will throw in GNOME 49.
+- **Fix**: Call `window.set_maximize_flags(flags)` first, then `window.maximize()`.
+- **Guard**: Suppressed when `get_maximized ?` appears on the same line (ternary version-compat pattern).
+- **Tested by**: `tests/fixtures/gnome49-compat@test/`
+
+### R-VER49-09: AppMenuButton removal
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py (min-version: 49)
+- **Rule**: `AppMenuButton` was removed from `panel.js` in GNOME 49.
+- **Rationale**: The app menu was removed from the GNOME Shell panel.
+- **Fix**: Remove references to `AppMenuButton`.
+- **Tested by**: `tests/fixtures/gnome49-appmenu@test/`
+
+---
+
+## Security (New)
+
+### R-SEC-18: pkexec target must not be user-writable
+- **Severity**: blocking
+- **Checked by**: check-lifecycle.py
+- **Rule**: The target script/binary passed to `pkexec` must not be in a user-writable location (`/home/`, `/tmp/`, `./`, `../`).
+- **Rationale**: A user-writable pkexec target allows privilege escalation — an attacker can replace the script with arbitrary code that runs as root.
+- **Fix**: Place the helper script in `/usr/local/bin/` or `/usr/lib/` and reference it by absolute path.
+- **Tested by**: `tests/fixtures/pkexec-user-writable@test/`
+
+### R-SEC-19: Network service disclosure
+- **Severity**: advisory
+- **Checked by**: check-quality.py
+- **Rule**: Extensions using HTTP/network requests (Soup.Session, Soup.Message, or similar) must disclose network access in the `metadata.json` description.
+- **Rationale**: EGO reviewers expect transparency about network activity. Extensions that make HTTP requests without disclosing it in the description will be flagged during review.
+- **Fix**: Add a mention of network/API/service usage to the `description` field in `metadata.json`, e.g., "This extension fetches data from [service name]."
+- **Tested by**: `tests/fixtures/network-undisclosed@test/`
+
+---
+
+## Quality (New)
+
+### R-QUAL-23: GSettings bind flags confusion
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: `GSettings.bind()` takes `Gio.SettingsBindFlags`, not `GObject.BindingFlags`.
+- **Rationale**: Using the wrong flags enum causes silent binding failures.
+- **Fix**: Use `Gio.SettingsBindFlags.DEFAULT` instead of `GObject.BindingFlags`.
+- **Tested by**: `tests/fixtures/gsettings-bind-flags@test/`
+
+### R-QUAL-24: Excessive null/undefined checks
+- **Severity**: advisory
+- **Checked by**: check-quality.py
+- **Rule**: Excessive null/undefined checks (15+ with ratio > 2%) suggest AI-generated code.
+- **Rationale**: Modern JavaScript and GJS support optional chaining (`?.`) and nullish coalescing (`??`) which are more idiomatic.
+- **Fix**: Replace verbose null guards with `?.` and `??` operators.
+- **Tested by**: `tests/fixtures/excessive-null-checks@test/`
+
+### R-QUAL-25: this.dir.get_path() anti-pattern
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: `this.dir.get_path()` should be replaced with `this.path`.
+- **Rationale**: The `Extension` base class provides `this.path` as a convenience property. Calling `this.dir.get_path()` is unnecessarily verbose and signals unfamiliarity with the Extension API — a common AI-generated pattern.
+- **Fix**: Use `this.path` instead of `this.dir.get_path()`.
+- **Tested by**: `tests/fixtures/dir-get-path@test/`
+
+### R-QUAL-26: Custom Logger class
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: Extensions should not define custom `Logger` classes.
+- **Rationale**: GJS provides `console.debug()`, `console.warn()`, and `console.error()` which integrate with the system journal. Custom logger classes add unnecessary abstraction and are a common AI-generated pattern that wraps the standard console API without adding value.
+- **Fix**: Use `console.debug()`, `console.warn()`, and `console.error()` directly instead of a custom Logger.
+- **Tested by**: `tests/fixtures/custom-logger@test/`
+
+---
+
+## AI Slop (New)
+
+### R-SLOP-27: Defensive spread copies
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: `{ ...this._something }` creates unnecessary shallow copies.
+- **Rationale**: GNOME extensions should pass object references directly. Defensive copying is an enterprise JavaScript pattern not used in GJS.
+- **Fix**: Pass the object reference directly instead of spreading.
+- **Tested by**: `tests/fixtures/slop-spread-copy@test/`
+
+### R-SLOP-28: instanceof Error checks
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: `instanceof Error/TypeError/RangeError/...` checks are unusual in GNOME extensions.
+- **Rationale**: In GJS catch blocks, errors are already typed. `instanceof` checks add no value and signal AI-generated over-defensive code.
+- **Fix**: Remove the `instanceof` check and handle the error directly.
+- **Tested by**: `tests/fixtures/slop-error-instanceof@test/`
+
+### R-SLOP-29: Empty destroy() override
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: A `destroy()` method that only calls `super.destroy()` is pointless.
+- **Rationale**: GObject automatically chains `destroy()` to the parent class. An override that does nothing except call super is unnecessary boilerplate, commonly generated by AI that adds "completeness" patterns without understanding the framework.
+- **Fix**: Remove the empty `destroy()` override entirely — GObject chains automatically.
+- **Tested by**: `tests/fixtures/empty-destroy-override@test/`
+
+### R-SLOP-29b: Empty destroy() body
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: `destroy() {}` with a completely empty body (no super call, no cleanup).
+- **Rationale**: A variant of R-SLOP-29 — where R-SLOP-29 catches `destroy()` that only calls super, this catches `destroy()` that does nothing at all. GObject chains `destroy()` automatically, so an empty override is a no-op. AI tools often scaffold these as "placeholder" methods.
+- **Fix**: Remove the empty `destroy()` override entirely.
+- **Tested by**: `tests/fixtures/slop-empty-destroy@test/`
+
+---
+
+## GNOME 50 (R-VER50)
+
+### R-VER50-01: releaseKeyboard() removed
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py (min-version: 50)
+- **Rule**: `releaseKeyboard()` was removed from `misc/keyboardManager.js` in GNOME 50.
+- **Rationale**: The function no longer has any input-method caller.
+- **Fix**: Remove calls to `releaseKeyboard()`.
+- **Tested by**: `tests/fixtures/gnome50-compat@test/`
+
+### R-VER50-02: holdKeyboard() removed
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py (min-version: 50)
+- **Rule**: `holdKeyboard()` was removed from `misc/keyboardManager.js` in GNOME 50.
+- **Rationale**: The function no longer has any input-method caller.
+- **Fix**: Remove calls to `holdKeyboard()`.
+- **Tested by**: `tests/fixtures/gnome50-compat@test/`
+
+### R-VER50-03: show-restart-message signal removed
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py (min-version: 50)
+- **Rule**: The `show-restart-message` signal was removed from `global.display` in GNOME 50.
+- **Rationale**: GNOME 50 dropped X11 support, and restart was only available on X11.
+- **Fix**: Remove the signal connection; restart is no longer available.
+- **Tested by**: `tests/fixtures/gnome50-compat@test/`
+
+### R-VER50-04: restart signal removed
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py (min-version: 50)
+- **Rule**: The `restart` signal was removed from `global.display` in GNOME 50.
+- **Rationale**: GNOME 50 dropped X11 support, and restart was only available on X11.
+- **Fix**: Remove the signal connection; restart is no longer available.
+- **Tested by**: `tests/fixtures/gnome50-compat@test/`
+
+### R-VER50-05: One-shot timeout lifecycle trap
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py (min-version: 50)
+- **Rule**: `timeout_add_once()`, `idle_add_once()`, and `timeout_add_seconds_once()` cannot be cancelled with `GLib.Source.remove()`.
+- **Rationale**: GNOME 50 added one-shot timeout variants that fire once and auto-remove. However, they cannot be cancelled before firing, so if the extension is disabled before the callback runs, the callback executes on a destroyed extension. A `_destroyed` guard in the callback is required.
+- **Fix**: Check `if (this._destroyed) return;` at the start of the callback.
+
+---
+
+## Security (R-SEC) — continued
+
+### R-SEC-20: pkexec advisory
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: `pkexec` usage will receive extra reviewer scrutiny.
+- **Rationale**: Extensions that use `pkexec` for privilege escalation require a valid polkit policy file. Reviewers will check that the action ID matches, the helper script validates input, and the target is not user-writable. Hardware extensions (e.g., battery threshold control) legitimately need pkexec.
+- **Fix**: Verify the polkit `.policy` file is present and the action ID matches. Consider udev rules for hardware access.
+
+---
+
+## AI Slop (R-SLOP) — continued
+
+### R-SLOP-30: typeof super.method check
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py
+- **Rule**: `typeof super.method === 'function'` checks are unnecessary in GObject inheritance.
+- **Rationale**: In GObject, parent class methods always exist. Checking `typeof super.destroy === 'function'` before calling it is a hallmark of AI-generated code that applies JavaScript prototype-chain uncertainty to a framework where inheritance is guaranteed by the type system.
+- **Fix**: Remove the `typeof` check and call `super.method()` directly.
+
+### R-SLOP-35: Object.freeze() usage
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: `Object.freeze()` on config objects is an AI code smell.
+- **Rationale**: GNOME extensions rarely need frozen objects. AI tools add `Object.freeze()` to configuration objects as a "best practice" from other ecosystems, but in GJS the pattern is unusual and signals generated code.
+- **Fix**: Remove `Object.freeze()`; use `const` declarations for immutability instead.
+- **Tested by**: `tests/fixtures/slop-object-freeze@test/`
+
+### R-SLOP-38: Over-long identifier in function call
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: Alphanumeric identifiers 28+ characters (starting with lowercase, no underscores) inside function call parentheses.
+- **Rationale**: AI-generated code tends to use excessively descriptive camelCase names like `currentBatteryThresholdValue` or `updatedNotificationMessage`. Human-written GNOME code favors concise names (`threshold`, `message`). The lowercase-start filter avoids false positives on PascalCase class names and UPPER_SNAKE constants. Threshold raised from 20 to 27 to avoid FPs on standard Clutter API names and domain-specific compound names (e.g., `distanceToCurrentWorkspace` at 26 chars). Snake_case identifiers (GLib/C naming convention) are excluded from the pattern since AI never generates underscore-separated names in JavaScript.
+- **Fix**: Shorten parameter/argument names to be concise but clear.
+- **Tested by**: `tests/fixtures/slop-long-params@test/`, `tests/fixtures/slop-long-id-guard@test/`
+- **Note**: Suppressed (`skip-if-compiled`) for extensions compiled from TypeScript via esbuild, where verbose parameter names from TypeScript signatures survive compilation. Also suppressed for identifiers ending in domain-specific suffixes (`Function`, `Callback`, `Handler`, `Listener`, `Adjustment`, long `Id`) which are common in GNOME/GLib naming conventions.
+
+### R-SLOP-40: Manual Promise wrapper
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: `new Promise((resolve, reject) =>` wrapping pattern.
+- **Rationale**: GJS provides `Gio._promisify()` to convert GIO async/finish methods into Promises. Manual Promise wrappers around GIO calls are verbose and error-prone (missing error handling, no cancellable support). However, non-GIO async patterns (e.g., D-Bus proxy init with timeout) may legitimately need manual wrapping.
+- **Fix**: Use `Gio._promisify()` for GIO async methods instead of manual Promise wrapping.
+- **Tested by**: `tests/fixtures/slop-promise-wrapper@test/`
+
+### R-SLOP-43: Underscore-prefixed export
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: `export function _foo` / `export class _Bar` / `export const _baz` — underscore convention conflicts with export.
+- **Rationale**: In JavaScript, underscore-prefixed names conventionally indicate private/internal identifiers. Exporting them contradicts this convention and signals confusion about module boundaries. AI tools sometimes generate `export function _helper()` without considering the semantic conflict.
+- **Fix**: Either remove the underscore (it's exported, so it's public) or don't export it.
+- **Note**: Files in `service/` are excluded (daemon internal APIs use underscore-prefixed exports as convention for cross-module private helpers).
+- **Tested by**: `tests/fixtures/slop-underscore-export@test/`, `tests/fixtures/service-daemon@test/`
+
+---
+
+## Quality (R-QUAL) — continued
+
+### R-QUAL-04b: Module-scope GObject construction
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py
+- **Rule**: `let/var` at column 0 followed by `new St./Gio./GLib./Clutter./Meta./Shell./GObject.` creates a module-scope GObject instance.
+- **Rationale**: Module-scope GObject instances persist across enable/disable cycles. When the extension is disabled and re-enabled, the old instance remains in memory while a new one may be created, causing leaks and undefined behavior.
+- **Fix**: Move the GObject construction into `enable()` and store as an instance property.
+
+### R-QUAL-27: Config.PACKAGE_VERSION string comparison
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: `Config.PACKAGE_VERSION === '47'` uses string comparison on version numbers.
+- **Rationale**: String comparison on version numbers is unreliable — `'9' > '47'` evaluates to `true` in JavaScript because string comparison is lexicographic. This is a common bug in version-gating code.
+- **Fix**: Use `parseInt(Config.PACKAGE_VERSION) >= 45` for numeric comparison.
+
+### R-QUAL-27b: Config.PACKAGE_VERSION.startsWith()
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: `Config.PACKAGE_VERSION.startsWith('45')` is unreliable for version checking.
+- **Rationale**: `startsWith` will match unintended versions (e.g., `'456'` would match `'45'`). Use numeric comparison instead.
+- **Fix**: Use `parseInt(Config.PACKAGE_VERSION) >= 45` instead of `Config.PACKAGE_VERSION.startsWith('45')`.
+
+---
+
+## Version Compatibility (R-VER48) — continued
+
+### R-VER48-04b: vertical property in constructor config
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py (min-version: 48, fix-min-version: 47)
+- **Rule**: `vertical: true/false` in constructor configuration objects is deprecated in GNOME 48.
+- **Rationale**: GNOME 48 deprecated the `vertical` shorthand property from St.BoxLayout and other container constructors. The `orientation` property replacement is available since GNOME 47. For multi-version extensions targeting GNOME <=46, the fix cannot be applied unconditionally.
+- **Fix**: Replace `{vertical: true}` with `{orientation: Clutter.Orientation.VERTICAL}`. Fix text is suppressed when the extension's minimum shell-version is below 47.
+
+---
+
+## Security (R-SEC) — continued
+
+### R-SEC-21: curl spawn forbidden
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py
+- **Rule**: Spawning `curl` via subprocess is forbidden.
+- **Rationale**: Extensions must use Soup.Session for HTTP requests. Spawning curl circumvents the GNOME sandbox and makes network requests untraceable.
+- **Fix**: Replace subprocess curl call with `Soup.Session` and `Soup.Message`.
+
+### R-SEC-22: gsettings/dconf spawn forbidden
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py
+- **Rule**: Spawning `gsettings` or `dconf` CLI tools is forbidden.
+- **Rationale**: Extensions must use `Gio.Settings` API directly. Spawning CLI tools for GSettings access is fragile and bypassable.
+- **Fix**: Use `this.getSettings()` or `new Gio.Settings()`.
+
+### R-SEC-23: Base64 encoding/decoding
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: Usage of `atob()` or `btoa()` may indicate obfuscated content.
+- **Rationale**: Base64 encoding in extensions is sometimes used to hide malicious payloads. Reviewers will inspect the encoded content.
+- **Fix**: If used legitimately (e.g., data URIs), add a comment explaining the purpose.
+
+---
+
+## Code Quality (R-QUAL) — continued
+
+### R-QUAL-30: lookupByURL() usage
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: `lookupByURL()` is discouraged.
+- **Rationale**: `lookupByURL()` is a fragile API that depends on internal URL format. Use `this.getSettings()` and `this.path` instead.
+- **Fix**: Replace with `this.getSettings()` and `this.path`.
+
+### R-QUAL-31: _onDestroy() naming
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: `_onDestroy()` should be renamed to `destroy()`.
+- **Rationale**: The GNOME convention is to override `destroy()` with `super.destroy()` at the end, not to use a private `_onDestroy()` callback.
+- **Fix**: Rename to `destroy() { /* cleanup */; super.destroy(); }`.
+- **Suppression**: Skipped when `_onDestroy.bind(` is found in the same file (signal handler pattern, via `replacement-pattern`). Also suppressed by nearby `.connect(` or `super._onDestroy` (via `guard-pattern`). **Limitation**: `replacement-pattern` operates at file level — in multi-class files where one class uses `_onDestroy` as a signal handler and another as a lifecycle override, the latter will be incorrectly suppressed.
+
+### R-QUAL-32: Unnecessary gi:// version specifier
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: `?version=` in gi:// imports for libraries that don't need it.
+- **Rationale**: Only Soup, Gtk, Gdk, and Adw require version specifiers. Adding versions to GLib, Gio, St, etc. is unnecessary and can cause breakage.
+- **Fix**: Remove `?version=` from the import.
+- **Note**: Files in `service/` are excluded (standalone daemon scripts require explicit version specifiers since they don't inherit the Shell's version context).
+
+### R-QUAL-33: Gio._promisify() prototype mutation
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py (deduplicate: true)
+- **Rule**: `Gio._promisify()` calls permanently mutate shared GJS prototypes.
+- **Rationale**: `Gio._promisify()` replaces a GIO class method with a Promise-returning version at the prototype level. This mutation is global and permanent — it cannot be undone in `disable()`. This is acceptable (and even recommended for GIO async), but the module-scope placement should be documented with a comment explaining why.
+- **Fix**: Add a comment above the `Gio._promisify()` call explaining it's intentionally at module scope because it permanently mutates a shared prototype.
+- **Tested by**: `tests/fixtures/promisify-module-scope@test/`
+
+### R-QUAL-34: Synchronous enumerate_children()
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: `Gio.File.enumerate_children()` is synchronous and blocks the Shell main loop.
+- **Rationale**: `enumerate_children()` performs synchronous I/O on the calling thread — in GNOME Shell, that's the main loop. On slow filesystems or large directories, this freezes the entire desktop until the operation completes.
+- **Fix**: Use `file.enumerate_children_async(attributes, flags, priority, cancellable, callback)` instead.
+- **Note**: Files in `service/` are excluded (daemon processes run in their own thread/process, not the compositor main loop).
+- **Tested by**: `tests/fixtures/sync-file-io@test/`, `tests/fixtures/service-daemon@test/`
+
+### R-QUAL-35: Synchronous D-Bus call
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: `.call_sync()`, `.get_sync()`, `.set_sync()`, `.call_with_unix_fd_list_sync()` on D-Bus connections/proxies.
+- **Rationale**: Synchronous D-Bus calls block the compositor main loop, freezing the entire desktop until the remote service responds. This is especially dangerous for system bus calls to slow services (e.g., UPower, NetworkManager).
+- **Fix**: Use the async variant (`.call()`, `.get()`, `.set()`) with a callback or `Gio._promisify()`.
+- **Note**: Files in `service/` are excluded (daemon processes run in their own thread/process, not the compositor main loop).
+- **Tested by**: `tests/fixtures/dbus-sync-call@test/`, `tests/fixtures/service-daemon@test/`
+
+### R-QUAL-36: CRITICAL notification urgency
+- **Severity**: advisory
+- **Checked by**: apply-patterns.py
+- **Rule**: Assigning `Urgency.CRITICAL` to a notification's urgency property.
+- **Rationale**: `MessageTray.Urgency.CRITICAL` bypasses Do Not Disturb mode and forces immediate display — it is intended for system-level emergencies (battery critical, disk full). Extensions using CRITICAL for promotional or informational notifications disrupt the user experience and will be flagged by EGO reviewers.
+- **Fix**: Use `MessageTray.Urgency.NORMAL` (or `.HIGH` at most) for extension notifications.
+- **Tested by**: `tests/fixtures/urgency-critical@test/`
+
+---
+
+## Version Compatibility (R-VER49) — continued
+
+### R-VER49-10: DoNotDisturbSwitch removed
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py (min-version: 49)
+- **Rule**: `DoNotDisturbSwitch` was removed in GNOME 49.
+- **Rationale**: GNOME 49 replaced `DoNotDisturbSwitch` with `DoNotDisturbToggle`.
+- **Fix**: Replace `DoNotDisturbSwitch` with `DoNotDisturbToggle`.
+
+### R-VER49-11: MaximizeFlags parameter removed
+- **Severity**: blocking
+- **Checked by**: apply-patterns.py (min-version: 49)
+- **Rule**: `MaximizeFlags` parameter was removed from `unmaximize()` in GNOME 49.
+- **Rationale**: The `unmaximize()` method no longer accepts a flags parameter.
+- **Fix**: Call `unmaximize()` without the `MaximizeFlags` parameter.
+- **Guard**: Suppressed when `get_maximized ?` appears on the same line (ternary version-compat pattern).
+
+---
+
+## Structural Checks — continued
+
+### quality/obfuscated-names: Obfuscator-style variable names
+- **Severity**: blocking
+- **Checked by**: check-quality.py
+- **Rule**: Detects `_0x`-prefixed hex variable names and high concentrations of obfuscator-style declarations.
+- **Rationale**: Obfuscated/minified code cannot be reviewed. EGO requires human-readable source code.
+- **Threshold**: 15+ unique suspect names or 50+ total usages.
+
+### quality/mixed-indentation: Mixed tab/space indentation
+- **Severity**: advisory
+- **Checked by**: check-quality.py
+- **Rule**: Flags files with both tab and space indentation (>10% minority style).
+- **Rationale**: Mixed indentation suggests copy-pasted code from different sources, which is a code quality concern.
+
+### quality/excessive-logging: Excessive debug logging
+- **Severity**: advisory
+- **Checked by**: check-quality.py
+- **Rule**: Warns when >15 `console.debug/log` calls exist without a settings guard.
+- **Rationale**: Excessive logging pollutes the system journal. Debug output should be configurable via a GSettings key.
+
+### lifecycle/widget-destroy: Widget lifecycle tracking
+- **Severity**: advisory
+- **Checked by**: check-lifecycle.py
+- **Rule**: Detects St/PanelMenu/PopupMenu/Clutter widgets created in `enable()` without `.destroy()` or null assignment in `disable()`.
+- **Rationale**: Widgets must be destroyed when the extension is disabled to prevent memory leaks and orphaned UI elements.
+
+### lifecycle/settings-cleanup: Settings object cleanup
+- **Severity**: advisory
+- **Checked by**: check-lifecycle.py
+- **Rule**: Detects `getSettings()`/`new Gio.Settings()` assignments not nulled in `disable()`.
+- **Rationale**: GSettings objects hold references that should be released when the extension is disabled.
+
+### R-ASYNC-03: .catch() on non-async method
+- **Severity**: advisory
+- **Checked by**: check-async.py
+- **Rule**: `.catch()` or `.then()` on a method that is not declared `async` in the same file.
+- **Rationale**: Calling `.catch()` on `undefined` (the return of a sync method) throws TypeError in GJS, silently crashing the callback.
+- **Fix**: Use try/catch for synchronous methods. Only use .catch() on Promises.
+
+### metadata/gettext-domain-mismatch: Gettext domain consistency
+- **Severity**: advisory
+- **Checked by**: check-metadata.py
+- **Rule**: Warns when `dgettext()` domain in JS doesn't match `gettext-domain` in metadata.json.
+- **Rationale**: Domain mismatch causes translations to silently fail.
+
+### metadata/shell-version-unknown: Unknown GNOME version
+- **Severity**: advisory
+- **Checked by**: check-metadata.py
+- **Rule**: Warns when `shell-version` contains a version not in the known GNOME releases list.
+- **Rationale**: Typos or fictional versions in shell-version waste reviewer time and may cause confusion.
+
+---
+
+## Disclosures (R-DISC)
+
+Rules for capability disclosure in metadata description.
+
+### R-DISC-01: Clipboard usage disclosure
+- **Severity**: advisory
+- **Checked by**: check-disclosures.py
+- **Rule**: If code uses `St.Clipboard`, the metadata description should mention clipboard access.
+- **Rationale**: EGO reviewers expect capabilities to be disclosed so users know what the extension accesses.
+- **Fix**: Add a mention of clipboard access to the `description` field in `metadata.json`.
+
+### R-DISC-02: Network usage disclosure
+- **Severity**: advisory
+- **Checked by**: check-disclosures.py
+- **Rule**: If code uses `Soup.Session`, `Soup.Message`, or `GLib.Uri`, the metadata description should mention network access.
+- **Rationale**: Network access is a sensitive capability. Reviewers check that it's disclosed and justified.
+- **Fix**: Add keywords like "network", "online", "http", or "api" to the metadata description.
+
+### R-DISC-03: pkexec usage disclosure
+- **Severity**: advisory
+- **Checked by**: check-disclosures.py
+- **Rule**: If code uses `pkexec` or `polkit`, the metadata description should disclose privileged access.
+- **Rationale**: Privilege escalation requires explicit disclosure and reviewer scrutiny.
+- **Fix**: Mention "pkexec", "privileged", or "root" in the metadata description.
+
+### R-DISC-04: Private API disclosure
+- **Severity**: advisory
+- **Checked by**: check-disclosures.py
+- **Rule**: If code accesses private APIs (`Main.panel._*`, `statusArea._*`, `quickSettings._*`), the description should disclose it.
+- **Rationale**: Private APIs may break between GNOME versions. Reviewers need to know the extension relies on unstable internals.
+- **Fix**: Mention "private" or "internal" API usage in the metadata description.
+
+### R-DISC-05: File I/O disclosure
+- **Severity**: advisory
+- **Checked by**: check-disclosures.py
+- **Rule**: If code performs file operations (`Gio.File.new_for_path`, `load_contents`, `replace_contents`, `monitor_file`), the description should mention file access.
+- **Rationale**: File I/O beyond GSettings indicates the extension reads or writes to the filesystem, which reviewers flag.
+- **Fix**: Mention "file", "read", "write", or "storage" in the metadata description.
+
+---
+
+## Polkit (R-POLKIT)
+
+Rules for polkit action ID validation.
+
+### R-POLKIT-01: Action ID match
+- **Severity**: blocking
+- **Checked by**: check-polkit.py
+- **Rule**: Action IDs in `.policy` XML must match those referenced in `.rules` JS files.
+- **Rationale**: Mismatched action IDs mean the polkit rules won't apply to the correct policy, potentially leaving privileged operations unprotected or always denied.
+- **Fix**: Ensure the `action.id` in your `.rules` file exactly matches the `<action id="...">` in your `.policy` file.
+
+### R-POLKIT-02: Action ID prefix convention
+- **Severity**: advisory
+- **Checked by**: check-polkit.py
+- **Rule**: Polkit action IDs should follow the `org.gnome.shell.extensions.*` namespace convention.
+- **Rationale**: Using the standard namespace prevents collisions with other extensions and system polkit actions.
+- **Fix**: Rename action IDs to `org.gnome.shell.extensions.your-extension.action-name`.
+
+### R-POLKIT-03: Helper script exists
+- **Severity**: advisory
+- **Checked by**: check-polkit.py
+- **Rule**: Helper script paths referenced in `.rules` should exist in the extension directory.
+- **Rationale**: If the rules file references a helper script that doesn't exist, the polkit rule will silently fail.
+- **Fix**: Ensure the script path in your `.rules` file matches the actual file location in your extension.
+
+---
+
+## Schema Usage (R-SCHEMA)
+
+Rules for GSettings schema key usage.
+
+### R-SCHEMA-10: Unused schema key
+- **Severity**: advisory
+- **Checked by**: check-schema-usage.py
+- **Rule**: Schema keys defined in `.gschema.xml` should be referenced in code.
+- **Rationale**: Unused schema keys add bloat, confuse reviewers, and suggest the schema was generated without review.
+- **Fix**: Remove unused keys from the schema, or add code that reads/writes them.
+
+### R-SCHEMA-11: Undefined key reference
+- **Severity**: blocking
+- **Checked by**: check-schema-usage.py
+- **Rule**: Key names referenced in code (`get_*`, `set_*`, `bind`, `connect('changed::...')`) must exist in the schema.
+- **Rationale**: Accessing a key that doesn't exist in the schema causes a runtime crash (GLib-GIO-ERROR).
+- **Fix**: Add the missing key to your `.gschema.xml`, or fix the key name in your code.
+
+---
+
+## Accessibility (R-A11Y)
+
+Rules for basic accessibility compliance.
+
+### R-A11Y-01: Icon-only button without accessible_name
+- **Severity**: advisory
+- **Checked by**: check-accessibility.py
+- **Rule**: `new St.Button({icon_name: ...})` without `accessible_name` or `label` property.
+- **Rationale**: Screen readers cannot announce icon-only buttons to users. Adding `accessible_name` provides a text description for assistive technologies.
+- **Fix**: Add `accessible_name: _('Button description')` to the constructor.
+
+### R-A11Y-02: Custom widget without accessible_role
+- **Severity**: advisory
+- **Checked by**: check-accessibility.py
+- **Rule**: Classes extending `St.Widget` directly should set `accessible_role`.
+- **Rationale**: Without an accessible role, screen readers don't know what kind of widget it is. Subclasses of concrete widgets (St.Button, St.BoxLayout) inherit sensible defaults.
+- **Fix**: Set `accessible_role` in the GObject.registerClass Properties or in the constructor.

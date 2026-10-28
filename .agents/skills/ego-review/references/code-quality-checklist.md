@@ -1,0 +1,679 @@
+# Code Quality Checklist
+
+EGO reviewers check for deprecated APIs, banned web patterns, and common
+mistakes from AI-generated code. This checklist covers what they look for
+and the correct replacements.
+
+## Deprecated Modules and Their Replacements
+
+These legacy modules are banned in GNOME 45+ extensions. Any use will be
+rejected.
+
+> **Reviewer says:** "Your extension uses `Mainloop`/`Lang`/`ByteArray` which are deprecated and removed in modern GJS. Please migrate to the current APIs — this is a rejection reason."
+
+| Deprecated | Replacement | Removed In |
+|---|---|---|
+| `Mainloop` | `GLib.timeout_add()` / `GLib.Source.remove()` | GNOME 45 |
+| `Mainloop.idle_add()` | `GLib.idle_add()` | GNOME 45 |
+| `Lang` | ES6 classes (`class Foo extends Bar {}`) | GNOME 44 |
+| `Lang.bind()` | Arrow functions or `Function.prototype.bind()` | GNOME 44 |
+| `ByteArray` | `TextEncoder` / `TextDecoder` | GNOME 44 |
+| `imports.*` syntax | ESM `import` syntax | GNOME 45 |
+| `const Main = imports.ui.main` | `import * as Main from 'resource:///org/gnome/shell/ui/main.js'` | GNOME 45 |
+
+### Import style (GNOME 45+)
+
+```javascript
+// WRONG: legacy imports
+const { St, Clutter, GLib } = imports.gi;
+const Main = imports.ui.main;
+const ExtensionUtils = imports.misc.extensionUtils;
+
+// CORRECT: ESM imports
+import St from 'gi://St';
+import Clutter from 'gi://Clutter';
+import GLib from 'gi://GLib';
+import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
+```
+
+## Web API Ban List
+
+> **Reviewer says:** "Your extension uses `setTimeout`/`fetch`/`XMLHttpRequest` which are browser APIs and don't exist in GJS. Please use the GLib/Soup equivalents."
+
+GJS is not a browser. These web APIs do not exist or behave incorrectly:
+
+| Banned | GJS Replacement | Notes |
+|---|---|---|
+| `setTimeout(fn, ms)` | `GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, fn)` | Callback must return `GLib.SOURCE_REMOVE` or `GLib.SOURCE_CONTINUE` |
+| `setInterval(fn, ms)` | `GLib.timeout_add()` returning `GLib.SOURCE_CONTINUE` | Must store ID for cleanup |
+| `clearTimeout(id)` | `GLib.Source.remove(id)` | Note: `GLib.Source.remove`, not `GLib.source_remove` |
+| `clearInterval(id)` | `GLib.Source.remove(id)` | Same API as clearTimeout |
+| `fetch(url)` | `Soup.Session` + `send_and_read_async` | Use libsoup3 for GNOME 45+ |
+| `XMLHttpRequest` | `Soup.Session` | XHR does not exist in GJS |
+| `Promise.race()` | Manual implementation or avoid | Check `_destroyed` after any await |
+| `Promise.all()` | Acceptable with care | Guard: `results.length > 0 && results.every(...)` |
+| `requestAnimationFrame` | `Clutter.Timeline` or `GLib.timeout_add` | No rAF in GJS |
+| `document.*` / `window.*` | N/A | No DOM in GJS; use St/Clutter widgets |
+| `localStorage` | `GSettings` or `GLib.get_user_data_dir()` | No localStorage in GJS |
+| `JSON.parse(fetch(...))` | `Soup.Session` + `JSON.parse(decoder.decode(bytes))` | Combine network + parsing correctly |
+
+### Timeout pattern comparison
+
+```javascript
+// WEB (wrong in GJS)
+const id = setTimeout(() => doStuff(), 5000);
+clearTimeout(id);
+
+// GJS (correct)
+const id = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 5000, () => {
+    doStuff();
+    return GLib.SOURCE_REMOVE; // One-shot; use SOURCE_CONTINUE for repeating
+});
+GLib.Source.remove(id);
+```
+
+## AI Code Detection Heuristics
+
+EGO reviewers are trained to spot AI-generated code that uses imaginary APIs.
+Common hallucination patterns:
+
+### Imaginary APIs
+
+- `Meta.Screen` -- does not exist; use `global.display` or `global.workspace_manager`
+- `Shell.WindowTracker.get_default().get_active_window()` -- no such method; use `global.display.get_focus_window()`
+- `Main.overview.toggle()` without checking `Main.overview.visible` first
+- `St.Button.set_label()` -- correct method is `set_child()` with an `St.Label`
+- `Clutter.Actor.set_position(x, y)` -- correct for Clutter, but wrong if applied to an St widget with layout manager
+- `GLib.file_get_contents()` returning a string -- it returns `[ok, contents, length]`; contents is a `Uint8Array`
+
+### Hallucinated imports
+
+- `import Meta from 'gi://Meta'` in prefs.js -- Meta is not available in preferences context
+- `import Shell from 'gi://Shell'` in prefs.js -- Shell is not available in preferences context
+- `import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js'` in prefs.js -- UI modules are extension-only
+
+### AI code telltale signs
+
+> **Reviewer says:** "This pattern is commonly seen in AI-generated code — excessive JSDoc type annotations, try-catch around every line, and methods that don't exist in GJS. Please review the code carefully and ensure all APIs actually exist."
+
+- Overly verbose comments explaining obvious code (`// Loop through the array`)
+- TypeScript-style JSDoc type annotations (`@param {string} name`)
+- Methods that don't exist on GJS objects but exist in web APIs
+- `try/catch` around every single line instead of logical blocks
+- Unused imports at the top of the file
+
+## Private API Documentation
+
+Use of private (underscore-prefixed) properties on GNOME Shell objects is
+sometimes unavoidable. Reviewers will flag it but may accept it with proper
+documentation.
+
+**Requirements for private API usage:**
+
+1. Add a comment explaining WHY the private API is needed
+2. State that no public alternative exists
+3. Note which GNOME Shell versions were tested
+4. Be prepared for breakage across GNOME versions
+
+```javascript
+// Private API: Main.panel.statusArea.quickSettings._indicators
+// No public API exists for reordering Quick Settings indicators.
+// Tested on GNOME 45, 46, 47, 48.
+const indicators = Main.panel.statusArea.quickSettings._indicators;
+```
+
+**Common private APIs used by extensions:**
+
+| Private API | Purpose | Public Alternative |
+|---|---|---|
+| `_indicators` | Quick Settings indicator reordering | None |
+| `_delegate` | Accessing actor's owning object | None (use `connectObject` owner) |
+| `_menus` | PopupMenu submenu access | `menu.box.get_children()` (partial) |
+
+## Excessive Logging
+
+> **Reviewer says:** "Extension MUST NOT print excessively to the log. Please remove `console.log()` calls and reduce logging to essential error messages only. Use `console.debug()` for operational messages if needed."
+
+EGO reviewers reject extensions with noisy logging. GNOME Shell's journal is
+shared by all extensions and the shell itself.
+
+| Method | Verdict | Use For |
+|---|---|---|
+| `console.log()` | **BANNED** | Do not use in production |
+| `print()` | **BANNED** | Do not use (goes to stdout, not journal) |
+| `log()` | **BANNED** | Deprecated global function |
+| `console.debug()` | Acceptable | Operational messages (init, state changes) |
+| `console.warn()` | Acceptable | Recoverable issues, deprecation notices |
+| `console.error()` | Acceptable | Actual errors that need attention |
+
+**Rule of thumb:** A reviewer should be able to enable the extension and see
+zero journal output during normal operation. `console.debug` messages only
+appear when the user explicitly enables debug output.
+
+## Custom Logger Class
+
+> **Reviewer says:** "Please use the built-in `console` methods instead of a custom Logger class. GNOME Shell's console already integrates with the journal — a custom wrapper adds complexity without benefit."
+
+AI-generated code often includes a custom Logger abstraction. This is
+unnecessary in GJS — the built-in `console` methods (`console.debug`,
+`console.warn`, `console.error`) handle journal integration, and GNOME 47+
+provides `console.getLogger()` for structured logging.
+
+```javascript
+// WRONG: custom Logger class
+class Logger {
+    static log(msg) { console.log(`[MyExt] ${msg}`); }
+    static warn(msg) { console.warn(`[MyExt] ${msg}`); }
+    static error(msg) { console.error(`[MyExt] ${msg}`); }
+}
+
+// CORRECT: use built-in console directly
+console.debug('MyExt: initialized');
+console.error('MyExt: failed to load:', e.message);
+```
+
+**Automatically checked by ego-lint (R-QUAL-26).**
+
+## this.dir.get_path() Anti-Pattern
+
+> **Reviewer says:** "Use `this.path` instead of `this.dir.get_path()`. The Extension base class already provides `this.path` as a convenience property." — Nowa Shell review
+
+```javascript
+// WRONG: verbose path access
+const configPath = GLib.build_filenamev([this.dir.get_path(), 'config.json']);
+
+// CORRECT: use the provided convenience property
+const configPath = GLib.build_filenamev([this.path, 'config.json']);
+```
+
+**Automatically checked by ego-lint (R-QUAL-25).**
+
+## Error Handling Patterns
+
+### Async operations
+
+Every `async` function and every `.then()` chain needs error handling:
+
+```javascript
+// CORRECT: try/catch around async
+async _loadData() {
+    try {
+        const result = await this._fetchSomething();
+        if (this._destroyed) return;
+        this._processResult(result);
+    } catch (e) {
+        if (!this._destroyed)
+            console.error('Failed to load data:', e.message);
+    }
+}
+```
+
+### File operations
+
+```javascript
+// CORRECT: handle missing files
+_readConfig() {
+    const file = Gio.File.new_for_path(path);
+    try {
+        const [ok, contents] = file.load_contents(null);
+        return new TextDecoder().decode(contents);
+    } catch (e) {
+        if (e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.NOT_FOUND))
+            return null; // File doesn't exist yet, that's OK
+        console.error('Failed to read config:', e.message);
+        return null;
+    }
+}
+```
+
+### D-Bus operations
+
+```javascript
+// CORRECT: handle proxy unavailability
+_getProfile() {
+    if (!this._proxy) {
+        console.warn('D-Bus proxy not available');
+        return null;
+    }
+    try {
+        return this._proxy.ActiveProfile;
+    } catch (e) {
+        console.error('Failed to read profile:', e.message);
+        return null;
+    }
+}
+```
+
+### Never swallow errors silently
+
+> **Reviewer says:** "Empty catch blocks hide bugs. At minimum, log the error with `console.error()`. If the error is expected and safe to ignore, add a comment explaining why."
+
+```javascript
+// WRONG: silent catch
+try { riskyOperation(); } catch (e) { }
+
+// WRONG: catch with only a comment
+try { riskyOperation(); } catch (e) { /* ignore */ }
+
+// CORRECT: at minimum log the error
+try {
+    riskyOperation();
+} catch (e) {
+    console.error('riskyOperation failed:', e.message);
+}
+```
+
+## GObject Patterns
+
+### Class registration
+
+All GObject subclasses must use `GObject.registerClass`:
+
+```javascript
+const MyWidget = GObject.registerClass(
+class MyWidget extends St.BoxLayout {
+    constructor(params) {
+        super(params);
+        // property initialization only
+    }
+});
+```
+
+### Destroy chaining
+
+Always chain the parent destroy method. However, an empty override that only
+calls `super.destroy()` is pure noise — GObject chains automatically:
+
+```javascript
+// WRONG: empty destroy override (GObject chains automatically)
+destroy() {
+    super.destroy();
+}
+
+// CORRECT: override only when you have resources to clean up
+destroy() {
+    // Clean up own resources first
+    if (this._timeoutId) {
+        GLib.Source.remove(this._timeoutId);
+        this._timeoutId = null;
+    }
+
+    // Then chain to parent
+    super.destroy();
+}
+```
+
+### Signal emission after property changes
+
+When implementing custom GObject properties, emit `notify` after changes:
+
+```javascript
+set myProperty(value) {
+    if (this._myProperty === value)
+        return;
+    this._myProperty = value;
+    this.notify('my-property');
+}
+```
+
+### connectObject for automatic cleanup
+
+Always prefer `connectObject` over manual `connect` + stored IDs:
+
+```javascript
+// PREFERRED
+someObject.connectObject(
+    'notify::active-profile', () => this._onProfileChanged(),
+    'notify::battery-level', () => this._onBatteryChanged(),
+    this  // owner -- disconnectObject(this) cleans up all at once
+);
+
+// Cleanup: one call disconnects everything
+someObject.disconnectObject(this);
+```
+
+## Preferences (prefs.js) Constraints
+
+> **Reviewer says:** "Your prefs.js imports Shell/Meta/St/Clutter which are not available in the preferences process. The prefs window runs in a separate GTK process — only GTK4 and Adwaita imports are allowed."
+
+The preferences window runs in a separate process with a GTK4 context, not
+the GNOME Shell process. This means:
+
+- **No Shell imports** (`gi://Shell`, `gi://Meta`, `gi://St`, `gi://Clutter`)
+- **No GNOME Shell UI imports** (`resource:///org/gnome/shell/ui/*`)
+- **Use GTK4 + Adwaita** (`gi://Gtk`, `gi://Adw`)
+- **Use `ExtensionPreferences`** base class, not `Extension`
+- **GSettings** are accessed via `this.getSettings()` in the prefs class
+
+```javascript
+// prefs.js (GNOME 45+)
+import Adw from 'gi://Adw';
+import Gtk from 'gi://Gtk';
+import { ExtensionPreferences } from
+    'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
+
+export default class MyPrefs extends ExtensionPreferences {
+    fillPreferencesWindow(window) {
+        const settings = this.getSettings();
+        // Build GTK4/Adw UI
+    }
+}
+```
+
+### Prefs.js memory leaks
+
+GObject instances stored as `this._` properties in prefs classes prevent
+garbage collection after the preferences window closes. Use local variables
+or attach a `close-request` handler to clean up.
+
+```javascript
+// WRONG: settings stored on class instance, never released
+fillPreferencesWindow(window) {
+    this._settings = this.getSettings();
+}
+
+// CORRECT: local variable, GC'd with window
+fillPreferencesWindow(window) {
+    const settings = this.getSettings();
+    // ... use settings locally
+}
+```
+
+**Automatically checked by ego-lint (R-PREFS-05).**
+
+### Prefs.js resource path difference
+
+The resource path for extension.js and prefs.js differ in capitalization:
+
+| Context | Resource Path |
+|---|---|
+| extension.js | `resource:///org/gnome/shell/extensions/extension.js` (lowercase) |
+| prefs.js | `resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js` (capitalized) |
+
+AI-generated code frequently gets this wrong, using the lowercase extension.js
+path in prefs.js.
+
+## Variable Declarations
+
+> **Reviewer says:** "Please replace `var` with `const` or `let`. Using `var` is a sign of outdated code style and causes scoping issues."
+
+Always use `const` (default) or `let` (when reassignment is needed). Never use
+`var` — it has function scope instead of block scope and causes subtle bugs in
+closures and loops.
+
+```javascript
+// WRONG
+var count = 0;
+for (var i = 0; i < 10; i++) { ... }
+
+// CORRECT
+let count = 0;
+for (let i = 0; i < 10; i++) { ... }
+const FIXED_VALUE = 42;
+```
+
+## Import Ordering Convention
+
+Follow the GJS style guide for import ordering:
+
+```javascript
+// 1. GI library imports
+import GLib from 'gi://GLib';
+import Gio from 'gi://Gio';
+import St from 'gi://St';
+
+// 2. GNOME Shell resource imports
+import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
+
+// 3. Extension imports
+import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
+```
+
+## Signal Connection Patterns
+
+### connectObject (Preferred — Auto-Cleanup)
+
+GNOME Shell provides `connectObject()` which automatically disconnects signals when the source object is destroyed:
+
+```js
+enable() {
+    Main.overview.connectObject(
+        'showing', () => this._onOverviewShowing(),
+        'hiding', () => this._onOverviewHiding(),
+        this // tie lifetime to this extension
+    );
+}
+
+disable() {
+    Main.overview.disconnectObject(this);
+}
+```
+
+**Why preferred:** No manual signal ID tracking. Signals are automatically disconnected when the owner object is destroyed or when `disconnectObject()` is called.
+
+### Manual connect with stored ID (Acceptable)
+
+```js
+enable() {
+    this._overviewShowingId = Main.overview.connect('showing', () => {
+        this._onOverviewShowing();
+    });
+}
+
+disable() {
+    if (this._overviewShowingId) {
+        Main.overview.disconnect(this._overviewShowingId);
+        this._overviewShowingId = null;
+    }
+}
+```
+
+**Why acceptable:** Correctly stores and disconnects signal IDs. Works but is more verbose and error-prone than connectObject.
+
+### Untracked connect (Red Flag)
+
+> **Reviewer says:** "I see `.connect()` calls without storing the signal ID. Without the ID, you cannot disconnect the signal in disable(). This is a rejection reason — all signals must be tracked and disconnected."
+
+```js
+enable() {
+    // BUG: Signal ID is not stored — cannot disconnect in disable()
+    Main.overview.connect('showing', () => {
+        this._onOverviewShowing();
+    });
+}
+```
+
+**Why problematic:** Signal persists after disable(), causing the callback to fire on a partially-destroyed extension. This leads to crashes, memory leaks, or undefined behavior.
+
+## Timeout Return Values
+
+### GLib.SOURCE_REMOVE vs GLib.SOURCE_CONTINUE
+
+GLib timeout callbacks MUST return a value to indicate whether the timeout should continue:
+
+```js
+// One-shot timeout (runs once, then stops)
+this._timeoutId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 5, () => {
+    this._doSomething();
+    return GLib.SOURCE_REMOVE; // Required: stops the timer
+});
+
+// Repeating timeout (runs every N seconds)
+this._intervalId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 10, () => {
+    this._poll();
+    return GLib.SOURCE_CONTINUE; // Required: keeps the timer running
+});
+```
+
+### Missing return value (Bug)
+
+> **Reviewer says:** "Your timeout callback doesn't return `GLib.SOURCE_REMOVE` or `GLib.SOURCE_CONTINUE`. Please add an explicit return value — without it the behavior is undefined and confusing."
+
+```js
+// BUG: No return value — GLib defaults to SOURCE_CONTINUE, creating an infinite timer
+this._timeoutId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 5, () => {
+    this._doSomething();
+    // Missing: return GLib.SOURCE_REMOVE;
+});
+```
+
+**Consequence:** Without an explicit return, the callback runs repeatedly forever. This is a common AI-generated bug — LLMs model GLib timeouts after browser `setTimeout` which doesn't need a return value.
+
+### Cleanup in disable()
+
+All timeout IDs must be cleared in `disable()`:
+
+```js
+disable() {
+    if (this._timeoutId) {
+        GLib.source_remove(this._timeoutId);
+        this._timeoutId = null;
+    }
+}
+```
+
+**Common mistake:** Forgetting to clear timeouts in disable(), leaving them running after the extension is disabled.
+
+## Hallucinated API Reference
+
+LLMs frequently call methods that don't exist. Common confusions:
+
+| Hallucinated API | Correct Alternative | Why LLMs Get It Wrong |
+|---|---|---|
+| `Meta.Screen` | `global.display` or `Meta.Display` | Older GNOME versions or X11 docs |
+| `Meta.Cursor` | `global.display.get_cursor_tracker()` | GTK/Qt confusion |
+| `Shell.WindowTracker.get_default().get_active_window()` | `global.display.focus_window` | Method doesn't exist |
+| `Shell.ActionMode.ALL` | `Shell.ActionMode.NORMAL` | Enum value doesn't exist |
+| `St.Button.set_label('text')` | `button.label = 'text'` | GTK setter style |
+| `St.Label.set_text('text')` | `label.text = 'text'` | GTK setter style |
+| `Clutter.Actor.show_all()` | `actor.show()` | GTK method |
+| `Clutter.Actor.hide_all()` | `actor.hide()` | GTK method |
+| `Clutter.Actor.set_position(x, y)` | `actor.set({x, y})` | GTK method |
+| `GLib.timeout_add_seconds_full(...)` | `GLib.timeout_add_seconds(...)` | Full variant not in GJS bindings |
+| `GLib.source_remove(id)` | `GLib.Source.remove(id)` | Wrong capitalization/namespace |
+| `GLib.file_get_contents()` | `Gio.File.new_for_path(p).load_contents(null)` | Doesn't exist in GJS bindings |
+| `Clutter.Actor.set_size(w, h)` | `actor.width = w; actor.height = h` | GTK-style setter |
+
+When reviewing, verify each imported API method actually exists by checking
+https://gjs-docs.gnome.org against the declared `shell-version`.
+
+## connectObject Migration Advisory
+
+When reviewing signal connection patterns:
+- If 3+ manual `.connect()` / `.disconnect()` pairs exist in the same class, suggest migration to `connectObject()` / `disconnectObject(this)` pattern
+- `connectObject()` auto-disconnects all signals when the object is destroyed
+- Available since GNOME 42, recommended pattern for GNOME 45+
+
+## Gio._promisify at Module Scope
+
+- `Gio._promisify()` mutates shared prototypes globally and CANNOT be undone on disable()
+- When found at module scope (outside enable/disable), warn that it modifies the GJS environment permanently
+- Acceptable: calling `_promisify` is idempotent (safe to call multiple times), but reviewers note it as a prototype mutation
+- On GNOME 47+, check if native async alternatives exist
+
+## Prefs.js GTK4/Adwaita Idioms
+
+When reviewing prefs.js:
+- Verify `fillPreferencesWindow()` is used (not `getPreferencesWidget()` for GNOME 45+)
+- Check for proper Adwaita widget usage: `Adw.PreferencesPage`, `Adw.PreferencesGroup`, `Adw.ActionRow`, `Adw.SwitchRow`
+- Verify no GTK3 patterns: `Gtk.Box`, `Gtk.Grid` when Adwaita equivalents exist
+- Check resource path: prefs.js uses `resource:///org/gnome/Shell/Extensions/js/` (capital S)
+
+---
+
+## Search Provider Contract
+
+If an extension implements a search provider:
+
+| Requirement | Implementation |
+|---|---|
+| `get id()` | Must return the extension's UUID |
+| `get appInfo()` | Must return `null` for extensions |
+| `canLaunchSearch` | Must return `false` |
+| Registration | `Main.overview.searchController.addProvider(this)` in `enable()` |
+| Unregistration | `Main.overview.searchController.removeProvider(this)` in `disable()` |
+| `createIcon` callback | Must account for display scaling (`scaleFactor`) |
+
+---
+
+## Translation Best Practices
+
+| Requirement | Severity |
+|---|---|
+| Use `String.prototype.format()` for `%s`/`%d` in translatable strings, NOT template literals | **SHOULD** |
+| Set `gettext-domain` in `metadata.json` | **SHOULD** |
+| Do NOT call `initTranslations()` manually (automatic in GNOME 45+) | **SHOULD** |
+
+**Wrong:**
+```javascript
+// Template literals break xgettext extraction
+let msg = _(`Found ${count} items`);
+```
+
+**Correct:**
+```javascript
+// format() works with xgettext
+let msg = _('Found %d items').format(count);
+```
+
+> **Not a defect**: Extensions may use `Gettext.dgettext` in extension-only files and `GLib.dgettext` in files shared with prefs.js. Both are correct for their context. `Gettext.dgettext` works only in the GNOME Shell extension process, while `GLib.dgettext` works in both extension and GTK4 prefs contexts. Only flag if a shared file (imported by both extension.js and prefs.js) uses `Gettext.dgettext`, which would fail in the prefs GTK4 context.
+
+---
+
+## Real Rejection Examples
+
+> **"Power Tracker" (September 2024):** Rejected partly for "missing repository URLs." The `url` field in metadata.json is practically mandatory.
+
+> **"Wechsel" (April 2024):** Rejected for "unnecessary version specifications in metadata.json" and including `package.json` in the ZIP.
+
+> **AI slop blog post (December 2025):** The EGO AI policy blog post (December 2025) cited `typeof super.destroy === 'function'` as a dead giveaway of AI-generated code. The correct pattern is simply `super.destroy()`.
+
+**Key lesson:** Reviewers cite specific line numbers in rejection feedback. "Remove line 556-558" is a typical review comment style.
+
+---
+
+## Code Quality Advisory Items
+
+These are best-practice recommendations that reviewers may note but are not automatic rejection reasons. Apply judgment based on context.
+
+### CQ-NEW-1: Prefer connectObject() over manual connect/disconnect
+
+For GNOME 42+, prefer `connectObject()`/`disconnectObject()` over manually tracking signal IDs. This eliminates an entire class of signal-leak bugs. **Automatically checked by ego-lint (lifecycle/connectObject-migration).**
+
+### CQ-NEW-2: Use settings.bind() for simple GSettings bindings
+
+When a GSettings key maps directly to a widget property, use `settings.bind()` instead of manual `connect('changed::key')` + initial read. Reduces boilerplate and ensures the binding is always in sync.
+
+### CQ-NEW-3: Use optional chaining in disable()
+
+Prefer `this._widget?.destroy()` over `if (this._widget) { this._widget.destroy(); }`. Optional chaining is idiomatic JS and reduces verbosity in cleanup code. **Automatically checked by ego-lint (quality/redundant-cleanup).**
+
+### CQ-NEW-4: Keep extension.js thin
+
+`extension.js` should primarily contain the `enable()`/`disable()` lifecycle and delegate complex logic to helper modules. Large monolithic extension.js files are harder to review and maintain.
+
+### CQ-NEW-5: Organize imports consistently
+
+Follow the GJS convention: (1) GI imports (`gi://`), (2) GNOME Shell resource imports (`resource:///`), (3) Extension imports (`./`). Separate groups with blank lines.
+
+### CQ-NEW-6: Error boundaries around async operations
+
+Every `async` function should have a try/catch at the top level. Unhandled rejections in GJS crash the GNOME Shell process.
+
+### CQ-NEW-7: Use numeric version comparison
+
+Compare `Config.PACKAGE_VERSION` numerically (`parseInt(Config.PACKAGE_VERSION) >= 45`), not as strings. String comparison breaks for multi-digit versions. **Automatically checked by ego-lint (R-QUAL-27).**
+
+### CQ-NEW-8: Single getSettings() instance
+
+Call `this.getSettings()` once in `enable()` and pass the settings object to sub-components via dependency injection. Multiple `getSettings()` calls create redundant GSettings instances. **Automatically checked by ego-lint (quality/repeated-settings).**
+
+### CQ-NEW-9: Descriptive class names
+
+Use descriptive class names that reflect the extension's purpose (`class BatteryIndicator extends SystemIndicator`), not generic names (`class MyExtension extends Extension`). The class name appears in error messages and logs.
+
+### CQ-NEW-10: Avoid unnecessary exports
+
+Only `export` symbols that are actually imported elsewhere. Unnecessary `export` on internal helper functions adds noise and suggests the code was auto-generated without considering module boundaries.
